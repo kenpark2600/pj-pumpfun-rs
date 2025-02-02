@@ -23,7 +23,7 @@ use anchor_spl::associated_token::{
 use borsh::BorshDeserialize;
 pub use pumpfun_cpi as cpi;
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// Configuration for priority fee compute unit parameters
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,18 +35,18 @@ pub struct PriorityFee {
 }
 
 /// Main client for interacting with the Pump.fun program
-pub struct PumpFun<'a> {
+pub struct PumpFun {
     /// RPC client for Solana network requests
     pub rpc: RpcClient,
     /// Keypair used to sign transactions
-    pub payer: &'a Keypair,
+    pub payer: Arc<Keypair>,
     /// Anchor client instance
-    pub client: Client<Rc<&'a Keypair>>,
+    pub client: Client<Arc<Keypair>>,
     /// Anchor program instance
-    pub program: Program<Rc<&'a Keypair>>,
+    pub program: Program<Arc<Keypair>>,
 }
 
-impl<'a> PumpFun<'a> {
+impl PumpFun {
     /// Creates a new PumpFun client instance
     ///
     /// # Arguments
@@ -61,7 +61,7 @@ impl<'a> PumpFun<'a> {
     /// Returns a new PumpFun client instance configured with the provided parameters
     pub fn new(
         cluster: Cluster,
-        payer: &'a Keypair,
+        payer: Arc<Keypair>,
         options: Option<CommitmentConfig>,
         ws: Option<bool>,
     ) -> Self {
@@ -74,14 +74,14 @@ impl<'a> PumpFun<'a> {
         let rpc: RpcClient = RpcClient::new(url.to_string());
 
         // Create Anchor Client with optional commitment config
-        let client: Client<Rc<&Keypair>> = if let Some(options) = options {
-            Client::new_with_options(cluster.clone(), Rc::new(payer), options)
+        let client: Client<Arc<Keypair>> = if let Some(options) = options {
+            Client::new_with_options(cluster.clone(), Arc::clone(&payer), options)
         } else {
-            Client::new(cluster.clone(), Rc::new(payer))
+            Client::new(cluster.clone(), payer.clone())
         };
 
         // Create Anchor Program instance for Pump.fun
-        let program: Program<Rc<&Keypair>> = client.program(cpi::ID).unwrap();
+        let program: Program<Arc<Keypair>> = client.program(cpi::ID).unwrap();
 
         // Return configured PumpFun client
         Self {
@@ -131,7 +131,7 @@ impl<'a> PumpFun<'a> {
 
         // Add create token instruction
         request = request.instruction(instruction::create(
-            self.payer,
+            &self.payer,
             mint,
             cpi::instruction::Create {
                 _name: ipfs.metadata.name,
@@ -201,7 +201,7 @@ impl<'a> PumpFun<'a> {
 
         // Add create token instruction
         request = request.instruction(instruction::create(
-            self.payer,
+            &self.payer,
             mint,
             cpi::instruction::Create {
                 _name: ipfs.metadata.name,
@@ -223,7 +223,7 @@ impl<'a> PumpFun<'a> {
 
         // Add buy instruction
         request = request.instruction(instruction::buy(
-            self.payer,
+            &self.payer,
             &mint.pubkey(),
             &global_account.fee_recipient,
             cpi::instruction::Buy {
@@ -299,7 +299,7 @@ impl<'a> PumpFun<'a> {
 
         // Add buy instruction
         request = request.instruction(instruction::buy(
-            self.payer,
+            &self.payer,
             mint,
             &global_account.fee_recipient,
             cpi::instruction::Buy {
@@ -371,7 +371,7 @@ impl<'a> PumpFun<'a> {
 
         // Add sell instruction
         request = request.instruction(instruction::sell(
-            self.payer,
+            &self.payer,
             mint,
             &global_account.fee_recipient,
             cpi::instruction::Sell {
@@ -501,8 +501,8 @@ mod tests {
 
     #[test]
     fn test_new_client() {
-        let payer = Keypair::new();
-        let client = PumpFun::new(Cluster::Devnet, &payer, None, None);
+        let payer = Arc::new(Keypair::new());
+        let client = PumpFun::new(Cluster::Devnet, payer.clone(), None, None);
         assert_eq!(client.payer.pubkey(), payer.pubkey());
     }
 
