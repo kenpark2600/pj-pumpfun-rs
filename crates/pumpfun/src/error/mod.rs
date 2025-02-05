@@ -72,3 +72,15 @@ impl std::error::Error for ClientError {
         }
     }
 }
+
+impl From<solana_client::client_error::ClientError> for ClientError {
+    fn from(err: solana_client::client_error::ClientError) -> Self {
+        Self::SolanaClientError(err)
+    }
+}
+
+impl From<anchor_client::ClientError> for ClientError {
+    fn from(err: anchor_client::ClientError) -> Self {
+        Self::AnchorClientError(err)
+    }
+}
