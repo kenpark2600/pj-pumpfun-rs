@@ -28,10 +28,11 @@ use anchor_client::{
     Cluster,
 };
 use pumpfun::{accounts::BondingCurveAccount, utils::CreateTokenMetadata, PriorityFee, PumpFun};
+use std::sync::Arc;
 
 // Create a new PumpFun client
-let payer: Keypair = Keypair::new();
-let client: PumpFun<'_> = PumpFun::new(Cluster::Mainnet, &payer, None, None);
+let payer: Arc<Keypair> = Arc::new(Keypair::new());
+let client: PumpFun = PumpFun::new(Cluster::Mainnet, payer.clone(), None, None);
 
 // Mint keypair
 let mint: Keypair = Keypair::new();
