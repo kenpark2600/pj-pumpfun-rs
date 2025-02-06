@@ -22,11 +22,12 @@ use anchor_spl::associated_token::{
 };
 use borsh::BorshDeserialize;
 pub use pumpfun_cpi as cpi;
+use serde::{Deserialize, Serialize};
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use std::sync::Arc;
 
 /// Configuration for priority fee compute unit parameters
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PriorityFee {
     /// Maximum compute units that can be consumed by the transaction
     pub limit: Option<u32>,

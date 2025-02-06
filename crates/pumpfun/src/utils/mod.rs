@@ -42,7 +42,7 @@ pub struct TokenMetadataResponse {
 }
 
 /// Parameters for creating new token metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateTokenMetadata {
     /// Name of the token
     pub name: String,
