@@ -15,8 +15,8 @@ A comprehensive Rust SDK for seamless interaction with the PumpFun Solana progra
 
 | Name                                  | Description                                                                        | Version |
 | ------------------------------------- | ---------------------------------------------------------------------------------- | ------- |
-| [`pumpfun`](./crates/pumpfun)         | Main client library for interacting with the PumpFun program                       | 3.0.1   |
-| [`pumpfun-cpi`](./crates/pumpfun-cpi) | CPI (Cross-Program Invocation) interfaces for integrating with the PumpFun program | 1.1.1   |
+| [`pumpfun`](./crates/pumpfun)         | Main client library for interacting with the PumpFun program                       | 3.0.2   |
+| [`pumpfun-cpi`](./crates/pumpfun-cpi) | CPI (Cross-Program Invocation) interfaces for integrating with the PumpFun program | 2.0.0   |
 
 ## Features
 
@@ -30,7 +30,7 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-pumpfun = "3.0.1"
+pumpfun = "3.0.2"
 ```
 
 ## Usage

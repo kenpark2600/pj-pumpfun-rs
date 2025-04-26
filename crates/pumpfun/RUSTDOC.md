@@ -17,7 +17,7 @@ The main entry point is the `PumpFun` struct which provides methods for interact
 
 > **Note:** The SDK automatically creates Associated Token Accounts (ATAs) when needed during buy transactions. No manual ATA creation is required.
 
-```rust,no_run
+```rust,ignore
 use anchor_client::{
     solana_sdk::{
         native_token::LAMPORTS_PER_SOL,

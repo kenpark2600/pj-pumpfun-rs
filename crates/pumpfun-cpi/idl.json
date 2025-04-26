@@ -207,6 +207,10 @@
         {
           "name": "uri",
           "type": "string"
+        },
+        {
+          "name": "creator",
+          "type": "pubkey"
         }
       ]
     },

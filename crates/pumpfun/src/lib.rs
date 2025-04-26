@@ -138,6 +138,7 @@ impl PumpFun {
                 _name: ipfs.metadata.name,
                 _symbol: ipfs.metadata.symbol,
                 _uri: ipfs.metadata.image,
+                _creator: self.payer.pubkey(),
             },
         ));
 
@@ -208,6 +209,7 @@ impl PumpFun {
                 _name: ipfs.metadata.name,
                 _symbol: ipfs.metadata.symbol,
                 _uri: ipfs.metadata.image,
+                _creator: self.payer.pubkey(),
             },
         ));
 
@@ -464,7 +466,7 @@ impl PumpFun {
             .await
             .map_err(error::ClientError::SolanaClientError)?;
 
-        accounts::GlobalAccount::try_from_slice(&account.data)
+        solana_sdk::borsh1::try_from_slice_unchecked::<accounts::GlobalAccount>(&account.data)
             .map_err(error::ClientError::BorshError)
     }
 
@@ -519,5 +521,14 @@ mod tests {
         assert!(mint_authority_pda != Pubkey::default());
         assert!(bonding_curve_pda.is_some());
         assert!(metadata_pda != Pubkey::default());
+    }
+
+    #[tokio::test]
+    async fn test_get_global_acct() {
+        let payer = Arc::new(Keypair::new());
+        let client = PumpFun::new(Cluster::Mainnet, payer.clone(), None, None);
+        let global_acct = client.get_global_account().await.unwrap();
+
+        assert!(global_acct.initialized);
     }
 }
