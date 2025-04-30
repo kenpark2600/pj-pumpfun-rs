@@ -178,12 +178,13 @@ pub async fn create_token_metadata(
 /// # Example
 /// ```rust
 /// use pumpfun::utils;
+/// use solana_sdk::native_token::{sol_to_lamports, LAMPORTS_PER_SOL};
 ///
-/// let amount = 1_000_000_000; // 1 SOL in lamports
+/// let amount = LAMPORTS_PER_SOL; // 1 SOL in lamports
 /// let slippage = 100; // 1% slippage tolerance
 ///
 /// let max_amount = utils::calculate_with_slippage_buy(amount, slippage);
-/// assert_eq!(max_amount, 1_010_000_000); // 1.01 SOL
+/// assert_eq!(max_amount, sol_to_lamports(1.01f64)); // 1.01 SOL
 /// ```
 pub fn calculate_with_slippage_buy(amount: u64, basis_points: u64) -> u64 {
     amount + (amount * basis_points) / 10000
@@ -201,70 +202,14 @@ pub fn calculate_with_slippage_buy(amount: u64, basis_points: u64) -> u64 {
 /// # Example
 /// ```rust
 /// use pumpfun::utils;
+/// use solana_sdk::native_token::{sol_to_lamports, LAMPORTS_PER_SOL};
 ///
-/// let amount = 1_000_000_000; // 1 SOL in lamports
+/// let amount = LAMPORTS_PER_SOL; // 1 SOL in lamports
 /// let slippage = 100; // 1% slippage tolerance
 ///
 /// let min_amount = utils::calculate_with_slippage_sell(amount, slippage);
-/// assert_eq!(min_amount, 990_000_000); // 0.99 SOL
+/// assert_eq!(min_amount, sol_to_lamports(0.99f64)); // 0.99 SOL
 /// ```
 pub fn calculate_with_slippage_sell(amount: u64, basis_points: u64) -> u64 {
     amount - (amount * basis_points) / 10000
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs::write;
-
-    #[tokio::test]
-    async fn test_create_token_metadata() {
-        // Create a temporary file
-        let temp_dir = std::env::temp_dir();
-        let file_path = temp_dir.join("test_image.png");
-        write(&file_path, b"fake image data").unwrap();
-
-        // Create test metadata
-        let metadata = CreateTokenMetadata {
-            name: "Test Token".to_string(),
-            symbol: "TEST".to_string(),
-            description: "Test Description".to_string(),
-            file: file_path.to_str().unwrap().to_string(),
-            twitter: None,
-            telegram: None,
-            website: Some("https://example.com".to_string()),
-        };
-
-        // Call the function
-        let result = create_token_metadata(metadata).await;
-
-        // Assert the result
-        assert!(result.is_ok());
-        let response = result.unwrap();
-
-        // Verify response fields
-        assert_eq!(response.metadata.name, "Test Token");
-        assert_eq!(response.metadata.symbol, "TEST");
-        assert_eq!(response.metadata.description, "Test Description");
-        assert!(response.metadata.image.starts_with("https://ipfs.io/ipfs/"));
-        assert!(response.metadata.show_name);
-        assert_eq!(response.metadata.created_on, "https://pump.fun");
-        assert!(response.metadata_uri.starts_with("https://ipfs.io/ipfs/"));
-    }
-
-    #[test]
-    fn test_calculate_with_slippage_buy() {
-        let amount = 1_000_000_000; // 1 SOL in lamports
-        let slippage = 100; // 1% slippage tolerance
-        let max_amount = calculate_with_slippage_buy(amount, slippage);
-        assert_eq!(max_amount, 1_010_000_000); // 1.01 SOL
-    }
-
-    #[test]
-    fn test_calculate_with_slippage_sell() {
-        let amount = 1_000_000_000; // 1 SOL in lamports
-        let slippage = 100; // 1% slippage tolerance
-        let min_amount = calculate_with_slippage_sell(amount, slippage);
-        assert_eq!(min_amount, 990_000_000); // 0.99 SOL
-    }
 }

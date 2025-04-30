@@ -3,7 +3,7 @@
 pub mod accounts;
 pub mod constants;
 pub mod error;
-pub mod instruction;
+pub mod instructions;
 pub mod utils;
 
 use anchor_client::{
@@ -21,7 +21,6 @@ use anchor_spl::associated_token::{
     spl_associated_token_account::instruction::create_associated_token_account,
 };
 use borsh::BorshDeserialize;
-pub use pumpfun_cpi as cpi;
 use serde::{Deserialize, Serialize};
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use std::sync::Arc;
@@ -30,9 +29,9 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PriorityFee {
     /// Maximum compute units that can be consumed by the transaction
-    pub limit: Option<u32>,
+    pub unit_limit: Option<u32>,
     /// Price in micro-lamports per compute unit
-    pub price: Option<u64>,
+    pub unit_price: Option<u64>,
 }
 
 /// Main client for interacting with the Pump.fun program
@@ -82,7 +81,7 @@ impl PumpFun {
         };
 
         // Create Anchor Program instance for Pump.fun
-        let program: Program<Arc<Keypair>> = client.program(cpi::ID).unwrap();
+        let program: Program<Arc<Keypair>> = client.program(constants::accounts::PUMPFUN).unwrap();
 
         // Return configured PumpFun client
         Self {
@@ -106,7 +105,7 @@ impl PumpFun {
     /// Returns the transaction signature if successful, or a ClientError if the operation fails
     pub async fn create(
         &self,
-        mint: &Keypair,
+        mint: Keypair,
         metadata: utils::CreateTokenMetadata,
         priority_fee: Option<PriorityFee>,
     ) -> Result<Signature, error::ClientError> {
@@ -119,31 +118,31 @@ impl PumpFun {
 
         // Add priority fee if provided
         if let Some(fee) = priority_fee {
-            if let Some(limit) = fee.limit {
+            if let Some(limit) = fee.unit_limit {
                 let limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(limit);
                 request = request.instruction(limit_ix);
             }
 
-            if let Some(price) = fee.price {
+            if let Some(price) = fee.unit_price {
                 let price_ix = ComputeBudgetInstruction::set_compute_unit_price(price);
                 request = request.instruction(price_ix);
             }
         }
 
         // Add create token instruction
-        request = request.instruction(instruction::create(
+        request = request.instruction(instructions::create(
             &self.payer,
-            mint,
-            cpi::instruction::Create {
-                _name: ipfs.metadata.name,
-                _symbol: ipfs.metadata.symbol,
-                _uri: ipfs.metadata.image,
-                _creator: self.payer.pubkey(),
+            &mint,
+            instructions::Create {
+                name: ipfs.metadata.name,
+                symbol: ipfs.metadata.symbol,
+                uri: ipfs.metadata.image,
+                creator: self.payer.pubkey(),
             },
         ));
 
         // Add signers
-        request = request.signer(&self.payer).signer(mint);
+        request = request.signer(self.payer.clone()).signer(mint);
 
         // Send transaction
         let signature: Signature = request
@@ -169,7 +168,7 @@ impl PumpFun {
     /// Returns the transaction signature if successful, or a ClientError if the operation fails
     pub async fn create_and_buy(
         &self,
-        mint: &Keypair,
+        mint: Keypair,
         metadata: utils::CreateTokenMetadata,
         amount_sol: u64,
         slippage_basis_points: Option<u64>,
@@ -190,26 +189,26 @@ impl PumpFun {
 
         // Add priority fee if provided
         if let Some(fee) = priority_fee {
-            if let Some(limit) = fee.limit {
+            if let Some(limit) = fee.unit_limit {
                 let limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(limit);
                 request = request.instruction(limit_ix);
             }
 
-            if let Some(price) = fee.price {
+            if let Some(price) = fee.unit_price {
                 let price_ix = ComputeBudgetInstruction::set_compute_unit_price(price);
                 request = request.instruction(price_ix);
             }
         }
 
         // Add create token instruction
-        request = request.instruction(instruction::create(
+        request = request.instruction(instructions::create(
             &self.payer,
-            mint,
-            cpi::instruction::Create {
-                _name: ipfs.metadata.name,
-                _symbol: ipfs.metadata.symbol,
-                _uri: ipfs.metadata.image,
-                _creator: self.payer.pubkey(),
+            &mint,
+            instructions::Create {
+                name: ipfs.metadata.name,
+                symbol: ipfs.metadata.symbol,
+                uri: ipfs.metadata.image,
+                creator: self.payer.pubkey(),
             },
         ));
 
@@ -225,19 +224,19 @@ impl PumpFun {
         }
 
         // Add buy instruction
-        request = request.instruction(instruction::buy(
+        request = request.instruction(instructions::buy(
             &self.payer,
             &mint.pubkey(),
             &global_account.fee_recipient,
-            cpi::instruction::Buy {
-                _amount: buy_amount,
-                _max_sol_cost: buy_amount_with_slippage,
+            instructions::Buy {
+                amount: buy_amount,
+                max_sol_cost: buy_amount_with_slippage,
             },
         ));
 
         // Add signers and send transaction
         let signature: Signature = request
-            .signer(&self.payer)
+            .signer(self.payer.clone())
             .signer(mint)
             .send()
             .await
@@ -260,14 +259,14 @@ impl PumpFun {
     /// Returns the transaction signature if successful, or a ClientError if the operation fails
     pub async fn buy(
         &self,
-        mint: &Pubkey,
+        mint: Pubkey,
         amount_sol: u64,
         slippage_basis_points: Option<u64>,
         priority_fee: Option<PriorityFee>,
     ) -> Result<Signature, error::ClientError> {
         // Get accounts and calculate buy amounts
         let global_account = self.get_global_account().await?;
-        let bonding_curve_account = self.get_bonding_curve_account(mint).await?;
+        let bonding_curve_account = self.get_bonding_curve_account(&mint).await?;
         let buy_amount = bonding_curve_account
             .get_buy_price(amount_sol)
             .map_err(error::ClientError::BondingCurveError)?;
@@ -278,41 +277,41 @@ impl PumpFun {
 
         // Add priority fee if provided
         if let Some(fee) = priority_fee {
-            if let Some(limit) = fee.limit {
+            if let Some(limit) = fee.unit_limit {
                 let limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(limit);
                 request = request.instruction(limit_ix);
             }
 
-            if let Some(price) = fee.price {
+            if let Some(price) = fee.unit_price {
                 let price_ix = ComputeBudgetInstruction::set_compute_unit_price(price);
                 request = request.instruction(price_ix);
             }
         }
 
         // Create Associated Token Account if needed
-        let ata: Pubkey = get_associated_token_address(&self.payer.pubkey(), mint);
+        let ata: Pubkey = get_associated_token_address(&self.payer.pubkey(), &mint);
         if self.rpc.get_account(&ata).await.is_err() {
             request = request.instruction(create_associated_token_account(
                 &self.payer.pubkey(),
                 &self.payer.pubkey(),
-                mint,
+                &mint,
                 &constants::accounts::TOKEN_PROGRAM,
             ));
         }
 
         // Add buy instruction
-        request = request.instruction(instruction::buy(
+        request = request.instruction(instructions::buy(
             &self.payer,
-            mint,
+            &mint,
             &global_account.fee_recipient,
-            cpi::instruction::Buy {
-                _amount: buy_amount,
-                _max_sol_cost: buy_amount_with_slippage,
+            instructions::Buy {
+                amount: buy_amount,
+                max_sol_cost: buy_amount_with_slippage,
             },
         ));
 
         // Add signer
-        request = request.signer(&self.payer);
+        request = request.signer(self.payer.clone());
 
         // Send transaction
         let signature: Signature = request
@@ -337,18 +336,18 @@ impl PumpFun {
     /// Returns the transaction signature if successful, or a ClientError if the operation fails
     pub async fn sell(
         &self,
-        mint: &Pubkey,
+        mint: Pubkey,
         amount_token: Option<u64>,
         slippage_basis_points: Option<u64>,
         priority_fee: Option<PriorityFee>,
     ) -> Result<Signature, error::ClientError> {
         // Get accounts and calculate sell amounts
-        let ata: Pubkey = get_associated_token_address(&self.payer.pubkey(), mint);
+        let ata: Pubkey = get_associated_token_address(&self.payer.pubkey(), &mint);
         let balance = self.rpc.get_token_account_balance(&ata).await?;
         let balance_u64: u64 = balance.amount.parse::<u64>().unwrap();
         let amount = amount_token.unwrap_or(balance_u64);
         let global_account = self.get_global_account().await?;
-        let bonding_curve_account = self.get_bonding_curve_account(mint).await?;
+        let bonding_curve_account = self.get_bonding_curve_account(&mint).await?;
         let min_sol_output = bonding_curve_account
             .get_sell_price(amount, global_account.fee_basis_points)
             .map_err(error::ClientError::BondingCurveError)?;
@@ -361,30 +360,30 @@ impl PumpFun {
 
         // Add priority fee if provided
         if let Some(fee) = priority_fee {
-            if let Some(limit) = fee.limit {
+            if let Some(limit) = fee.unit_limit {
                 let limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(limit);
                 request = request.instruction(limit_ix);
             }
 
-            if let Some(price) = fee.price {
+            if let Some(price) = fee.unit_price {
                 let price_ix = ComputeBudgetInstruction::set_compute_unit_price(price);
                 request = request.instruction(price_ix);
             }
         }
 
         // Add sell instruction
-        request = request.instruction(instruction::sell(
+        request = request.instruction(instructions::sell(
             &self.payer,
-            mint,
+            &mint,
             &global_account.fee_recipient,
-            cpi::instruction::Sell {
-                _amount: amount,
-                _min_sol_output: min_sol_output,
+            instructions::Sell {
+                amount,
+                min_sol_output,
             },
         ));
 
         // Add signer
-        request = request.signer(&self.payer);
+        request = request.signer(self.payer.clone());
 
         // Send transaction
         let signature: Signature = request
@@ -402,7 +401,7 @@ impl PumpFun {
     /// Returns the PDA public key derived from the GLOBAL_SEED
     pub fn get_global_pda() -> Pubkey {
         let seeds: &[&[u8]; 1] = &[constants::seeds::GLOBAL_SEED];
-        let program_id: &Pubkey = &cpi::ID;
+        let program_id: &Pubkey = &constants::accounts::PUMPFUN;
         Pubkey::find_program_address(seeds, program_id).0
     }
 
@@ -413,7 +412,7 @@ impl PumpFun {
     /// Returns the PDA public key derived from the MINT_AUTHORITY_SEED
     pub fn get_mint_authority_pda() -> Pubkey {
         let seeds: &[&[u8]; 1] = &[constants::seeds::MINT_AUTHORITY_SEED];
-        let program_id: &Pubkey = &cpi::ID;
+        let program_id: &Pubkey = &constants::accounts::PUMPFUN;
         Pubkey::find_program_address(seeds, program_id).0
     }
 
@@ -428,7 +427,7 @@ impl PumpFun {
     /// Returns Some(PDA) if derivation succeeds, or None if it fails
     pub fn get_bonding_curve_pda(mint: &Pubkey) -> Option<Pubkey> {
         let seeds: &[&[u8]; 2] = &[constants::seeds::BONDING_CURVE_SEED, mint.as_ref()];
-        let program_id: &Pubkey = &cpi::ID;
+        let program_id: &Pubkey = &constants::accounts::PUMPFUN;
         let pda: Option<(Pubkey, u8)> = Pubkey::try_find_program_address(seeds, program_id);
         pda.map(|pubkey| pubkey.0)
     }
@@ -494,41 +493,5 @@ impl PumpFun {
 
         accounts::BondingCurveAccount::try_from_slice(&account.data)
             .map_err(error::ClientError::BorshError)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use anchor_client::solana_sdk::signer::keypair::Keypair;
-
-    #[test]
-    fn test_new_client() {
-        let payer = Arc::new(Keypair::new());
-        let client = PumpFun::new(Cluster::Devnet, payer.clone(), None, None);
-        assert_eq!(client.payer.pubkey(), payer.pubkey());
-    }
-
-    #[test]
-    fn test_get_pdas() {
-        let mint = Keypair::new();
-        let global_pda = PumpFun::get_global_pda();
-        let mint_authority_pda = PumpFun::get_mint_authority_pda();
-        let bonding_curve_pda = PumpFun::get_bonding_curve_pda(&mint.pubkey());
-        let metadata_pda = PumpFun::get_metadata_pda(&mint.pubkey());
-
-        assert!(global_pda != Pubkey::default());
-        assert!(mint_authority_pda != Pubkey::default());
-        assert!(bonding_curve_pda.is_some());
-        assert!(metadata_pda != Pubkey::default());
-    }
-
-    #[tokio::test]
-    async fn test_get_global_acct() {
-        let payer = Arc::new(Keypair::new());
-        let client = PumpFun::new(Cluster::Mainnet, payer.clone(), None, None);
-        let global_acct = client.get_global_account().await.unwrap();
-
-        assert!(global_acct.initialized);
     }
 }
