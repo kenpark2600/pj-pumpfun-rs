@@ -1,108 +1,154 @@
 #![doc = include_str!("../RUSTDOC.md")]
 
 pub mod accounts;
+pub mod common;
 pub mod constants;
 pub mod error;
 pub mod instructions;
 pub mod utils;
 
-use anchor_client::{
-    solana_client::nonblocking::rpc_client::RpcClient,
-    solana_sdk::{
-        commitment_config::CommitmentConfig,
-        pubkey::Pubkey,
-        signature::{Keypair, Signature},
-        signer::Signer,
-    },
-    Client, Cluster, Program,
-};
-use anchor_spl::associated_token::{
-    get_associated_token_address,
-    spl_associated_token_account::instruction::create_associated_token_account,
-};
 use borsh::BorshDeserialize;
-use serde::{Deserialize, Serialize};
-use solana_sdk::compute_budget::ComputeBudgetInstruction;
+use common::{Cluster, PriorityFee};
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::{
+    compute_budget::ComputeBudgetInstruction,
+    instruction::Instruction,
+    pubkey::Pubkey,
+    signature::{Keypair, Signature},
+    signer::Signer,
+    transaction::Transaction,
+};
+use spl_associated_token_account::{
+    get_associated_token_address, instruction::create_associated_token_account,
+};
 use std::sync::Arc;
 
-/// Configuration for priority fee compute unit parameters
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PriorityFee {
-    /// Maximum compute units that can be consumed by the transaction
-    pub unit_limit: Option<u32>,
-    /// Price in micro-lamports per compute unit
-    pub unit_price: Option<u64>,
-}
-
 /// Main client for interacting with the Pump.fun program
+///
+/// This struct provides the primary interface for interacting with the Pump.fun
+/// token platform on Solana. It handles connection to the Solana network and provides
+/// methods for token creation, buying, and selling using bonding curves.
+///
+/// # Examples
+///
+/// ```no_run
+/// use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+/// use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair};
+/// use std::sync::Arc;
+///
+/// // Create a new client connected to devnet
+/// let payer = Arc::new(Keypair::new());
+/// let commitment = CommitmentConfig::confirmed();
+/// let priority_fee = PriorityFee::default();
+/// let cluster = Cluster::devnet(commitment, priority_fee);
+/// let client = PumpFun::new(payer, cluster);
+/// ```
 pub struct PumpFun {
-    /// RPC client for Solana network requests
-    pub rpc: RpcClient,
     /// Keypair used to sign transactions
     pub payer: Arc<Keypair>,
-    /// Anchor client instance
-    pub client: Client<Arc<Keypair>>,
-    /// Anchor program instance
-    pub program: Program<Arc<Keypair>>,
+    /// RPC client for Solana network requests
+    pub rpc: Arc<RpcClient>,
+    /// Cluster configuration
+    pub cluster: Cluster,
 }
 
 impl PumpFun {
     /// Creates a new PumpFun client instance
     ///
+    /// Initializes a new client for interacting with the Pump.fun program on Solana.
+    /// This client manages connection to the Solana network and provides methods for
+    /// creating, buying, and selling tokens.
+    ///
     /// # Arguments
     ///
-    /// * `cluster` - Solana cluster to connect to (e.g. devnet, mainnet-beta)
     /// * `payer` - Keypair used to sign and pay for transactions
-    /// * `options` - Optional commitment config for transaction finality
-    /// * `ws` - Whether to use websocket connection instead of HTTP
+    /// * `cluster` - Solana cluster configuration including RPC endpoints and transaction parameters
     ///
     /// # Returns
     ///
     /// Returns a new PumpFun client instance configured with the provided parameters
-    pub fn new(
-        cluster: Cluster,
-        payer: Arc<Keypair>,
-        options: Option<CommitmentConfig>,
-        ws: Option<bool>,
-    ) -> Self {
-        // Create Solana RPC Client with either WS or HTTP endpoint
-        let url = if ws.unwrap_or(false) {
-            cluster.ws_url()
-        } else {
-            cluster.url()
-        };
-        let rpc: RpcClient = RpcClient::new(url.to_string());
-
-        // Create Anchor Client with optional commitment config
-        let client: Client<Arc<Keypair>> = if let Some(options) = options {
-            Client::new_with_options(cluster.clone(), Arc::clone(&payer), options)
-        } else {
-            Client::new(cluster.clone(), payer.clone())
-        };
-
-        // Create Anchor Program instance for Pump.fun
-        let program: Program<Arc<Keypair>> = client.program(constants::accounts::PUMPFUN).unwrap();
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair};
+    /// use std::sync::Arc;
+    ///
+    /// let payer = Arc::new(Keypair::new());
+    /// let commitment = CommitmentConfig::confirmed();
+    /// let priority_fee = PriorityFee::default();
+    /// let cluster = Cluster::devnet(commitment, priority_fee);
+    /// let client = PumpFun::new(payer, cluster);
+    /// ```
+    pub fn new(payer: Arc<Keypair>, cluster: Cluster) -> Self {
+        // Create Solana RPC Client with HTTP endpoint
+        let rpc = Arc::new(RpcClient::new_with_commitment(
+            cluster.rpc.http.clone(),
+            cluster.commitment,
+        ));
 
         // Return configured PumpFun client
         Self {
-            rpc,
             payer,
-            client,
-            program,
+            rpc,
+            cluster,
         }
     }
 
     /// Creates a new token with metadata by uploading metadata to IPFS and initializing on-chain accounts
     ///
+    /// This method handles the complete process of creating a new token on Pump.fun:
+    /// 1. Uploads token metadata and image to IPFS
+    /// 2. Creates a new SPL token with the provided mint keypair
+    /// 3. Initializes the bonding curve that determines token pricing
+    /// 4. Sets up metadata using the Metaplex standard
+    ///
     /// # Arguments
     ///
     /// * `mint` - Keypair for the new token mint account that will be created
     /// * `metadata` - Token metadata including name, symbol, description and image file
-    /// * `priority_fee` - Optional priority fee configuration for compute units
+    /// * `priority_fee` - Optional priority fee configuration for compute units. If None, uses the
+    ///                    default from the cluster configuration
     ///
     /// # Returns
     ///
     /// Returns the transaction signature if successful, or a ClientError if the operation fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Metadata upload to IPFS fails
+    /// - Transaction creation fails
+    /// - Transaction execution on Solana fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}, utils::CreateTokenMetadata};
+    /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair};
+    /// # use std::sync::Arc;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let payer = Arc::new(Keypair::new());
+    /// # let commitment = CommitmentConfig::confirmed();
+    /// # let cluster = Cluster::devnet(commitment, PriorityFee::default());
+    /// # let client = PumpFun::new(payer, cluster);
+    /// let mint = Keypair::new();
+    /// let metadata = CreateTokenMetadata {
+    ///     name: "My Token".to_string(),
+    ///     symbol: "MYTKN".to_string(),
+    ///     description: "A test token created with Pump.fun".to_string(),
+    ///     file: "path/to/image.png".to_string(),
+    ///     twitter: None,
+    ///     telegram: None,
+    ///     website: Some("https://example.com".to_string()),
+    /// };
+    ///
+    /// let signature = client.create(mint, metadata, None).await?;
+    /// println!("Token created! Signature: {}", signature);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn create(
         &self,
         mint: Keypair,
@@ -114,23 +160,15 @@ impl PumpFun {
             .await
             .map_err(error::ClientError::UploadMetadataError)?;
 
-        let mut request = self.program.request();
+        let mut instructions = Vec::new();
 
-        // Add priority fee if provided
-        if let Some(fee) = priority_fee {
-            if let Some(limit) = fee.unit_limit {
-                let limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(limit);
-                request = request.instruction(limit_ix);
-            }
-
-            if let Some(price) = fee.unit_price {
-                let price_ix = ComputeBudgetInstruction::set_compute_unit_price(price);
-                request = request.instruction(price_ix);
-            }
-        }
+        // Add priority fee if provided or default to cluster priority fee
+        let priority_fee = priority_fee.unwrap_or(self.cluster.priority_fee);
+        let priority_fee_ixs = Self::get_priority_fee_instructions(&priority_fee);
+        instructions.extend(priority_fee_ixs);
 
         // Add create token instruction
-        request = request.instruction(instructions::create(
+        instructions.push(instructions::create(
             &self.payer,
             &mint,
             instructions::Create {
@@ -141,31 +179,93 @@ impl PumpFun {
             },
         ));
 
-        // Add signers
-        request = request.signer(self.payer.clone()).signer(mint);
-
-        // Send transaction
-        let signature: Signature = request
-            .send()
+        // Create and sign transaction
+        let recent_blockhash = self
+            .rpc
+            .get_latest_blockhash()
             .await
-            .map_err(error::ClientError::AnchorClientError)?;
+            .map_err(error::ClientError::SolanaClientError)?;
+
+        let transaction = Transaction::new_signed_with_payer(
+            &instructions,
+            Some(&self.payer.pubkey()),
+            &[&*self.payer, &mint],
+            recent_blockhash,
+        );
+
+        // Send and confirm transaction
+        let signature = self
+            .rpc
+            .send_and_confirm_transaction(&transaction)
+            .await
+            .map_err(error::ClientError::SolanaClientError)?;
 
         Ok(signature)
     }
 
     /// Creates a new token and immediately buys an initial amount in a single atomic transaction
     ///
+    /// This method combines token creation and an initial purchase into a single atomic transaction.
+    /// This is often preferred for new token launches as it:
+    /// 1. Creates the token and its bonding curve
+    /// 2. Makes an initial purchase to establish liquidity
+    /// 3. Guarantees that the creator becomes the first holder
+    ///
+    /// The entire operation is executed as a single transaction, ensuring atomicity.
+    ///
     /// # Arguments
     ///
-    /// * `mint` - Keypair for the new token mint
-    /// * `metadata` - Token metadata to upload to IPFS
-    /// * `amount_sol` - Amount of SOL to spend on initial buy in lamports
-    /// * `slippage_basis_points` - Optional maximum acceptable slippage in basis points (1 bp = 0.01%). Defaults to 500
-    /// * `priority_fee` - Optional priority fee configuration for compute units
+    /// * `mint` - Keypair for the new token mint account that will be created
+    /// * `metadata` - Token metadata including name, symbol, description and image file
+    /// * `amount_sol` - Amount of SOL to spend on the initial buy, in lamports (1 SOL = 1,000,000,000 lamports)
+    /// * `slippage_basis_points` - Optional maximum acceptable slippage in basis points (1 bp = 0.01%).
+    ///                             If None, defaults to 500 (5%)
+    /// * `priority_fee` - Optional priority fee configuration for compute units. If None, uses the
+    ///                    default from the cluster configuration
     ///
     /// # Returns
     ///
     /// Returns the transaction signature if successful, or a ClientError if the operation fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Metadata upload to IPFS fails
+    /// - Account retrieval fails
+    /// - Transaction creation fails
+    /// - Transaction execution on Solana fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}, utils::CreateTokenMetadata};
+    /// # use solana_sdk::{commitment_config::CommitmentConfig, native_token::sol_to_lamports, signature::Keypair};
+    /// # use std::sync::Arc;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let payer = Arc::new(Keypair::new());
+    /// # let commitment = CommitmentConfig::confirmed();
+    /// # let cluster = Cluster::devnet(commitment, PriorityFee::default());
+    /// # let client = PumpFun::new(payer, cluster);
+    /// let mint = Keypair::new();
+    /// let metadata = CreateTokenMetadata {
+    ///     name: "My Token".to_string(),
+    ///     symbol: "MYTKN".to_string(),
+    ///     description: "A test token created with Pump.fun".to_string(),
+    ///     file: "path/to/image.png".to_string(),
+    ///     twitter: None,
+    ///     telegram: None,
+    ///     website: Some("https://example.com".to_string()),
+    /// };
+    ///
+    /// // Create token and buy 0.1 SOL worth with 5% slippage tolerance
+    /// let amount_sol = sol_to_lamports(0.1f64); // 0.1 SOL in lamports
+    /// let slippage_bps = Some(500); // 5%
+    ///
+    /// let signature = client.create_and_buy(mint, metadata, amount_sol, slippage_bps, None).await?;
+    /// println!("Token created and bought! Signature: {}", signature);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn create_and_buy(
         &self,
         mint: Keypair,
@@ -185,23 +285,15 @@ impl PumpFun {
         let buy_amount_with_slippage =
             utils::calculate_with_slippage_buy(amount_sol, slippage_basis_points.unwrap_or(500));
 
-        let mut request = self.program.request();
+        let mut instructions = Vec::new();
 
-        // Add priority fee if provided
-        if let Some(fee) = priority_fee {
-            if let Some(limit) = fee.unit_limit {
-                let limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(limit);
-                request = request.instruction(limit_ix);
-            }
-
-            if let Some(price) = fee.unit_price {
-                let price_ix = ComputeBudgetInstruction::set_compute_unit_price(price);
-                request = request.instruction(price_ix);
-            }
-        }
+        // Add priority fee if provided or default to cluster priority fee
+        let priority_fee = priority_fee.unwrap_or(self.cluster.priority_fee);
+        let priority_fee_ixs = Self::get_priority_fee_instructions(&priority_fee);
+        instructions.extend(priority_fee_ixs);
 
         // Add create token instruction
-        request = request.instruction(instructions::create(
+        instructions.push(instructions::create(
             &self.payer,
             &mint,
             instructions::Create {
@@ -215,7 +307,7 @@ impl PumpFun {
         // Create Associated Token Account if needed
         let ata: Pubkey = get_associated_token_address(&self.payer.pubkey(), &mint.pubkey());
         if self.rpc.get_account(&ata).await.is_err() {
-            request = request.instruction(create_associated_token_account(
+            instructions.push(create_associated_token_account(
                 &self.payer.pubkey(),
                 &self.payer.pubkey(),
                 &mint.pubkey(),
@@ -224,7 +316,7 @@ impl PumpFun {
         }
 
         // Add buy instruction
-        request = request.instruction(instructions::buy(
+        instructions.push(instructions::buy(
             &self.payer,
             &mint.pubkey(),
             &global_account.fee_recipient,
@@ -234,29 +326,86 @@ impl PumpFun {
             },
         ));
 
-        // Add signers and send transaction
-        let signature: Signature = request
-            .signer(self.payer.clone())
-            .signer(mint)
-            .send()
+        // Create and sign transaction
+        let recent_blockhash = self
+            .rpc
+            .get_latest_blockhash()
             .await
-            .map_err(error::ClientError::AnchorClientError)?;
+            .map_err(error::ClientError::SolanaClientError)?;
+
+        let transaction = Transaction::new_signed_with_payer(
+            &instructions,
+            Some(&self.payer.pubkey()),
+            &[&*self.payer, &mint],
+            recent_blockhash,
+        );
+
+        // Send and confirm transaction
+        let signature = self
+            .rpc
+            .send_and_confirm_transaction(&transaction)
+            .await
+            .map_err(error::ClientError::SolanaClientError)?;
 
         Ok(signature)
     }
 
     /// Buys tokens from a bonding curve by spending SOL
     ///
+    /// This method purchases tokens from a bonding curve by providing SOL. The amount of tokens
+    /// received is determined by the bonding curve formula for the specific token. As more tokens
+    /// are purchased, the price increases according to the curve function.
+    ///
+    /// The method:
+    /// 1. Calculates how many tokens will be received for the given SOL amount
+    /// 2. Creates an associated token account for the buyer if needed
+    /// 3. Executes the buy transaction with slippage protection
+    ///
+    /// A portion of the SOL is taken as a fee according to the global configuration.
+    ///
     /// # Arguments
     ///
     /// * `mint` - Public key of the token mint to buy
-    /// * `amount_sol` - Amount of SOL to spend in lamports
-    /// * `slippage_basis_points` - Optional maximum acceptable slippage in basis points (1 bp = 0.01%). Defaults to 500
-    /// * `priority_fee` - Optional priority fee configuration for compute units
+    /// * `amount_sol` - Amount of SOL to spend, in lamports (1 SOL = 1,000,000,000 lamports)
+    /// * `slippage_basis_points` - Optional maximum acceptable slippage in basis points (1 bp = 0.01%).
+    ///                             If None, defaults to 500 (5%)
+    /// * `priority_fee` - Optional priority fee configuration for compute units. If None, uses the
+    ///                    default from the cluster configuration
     ///
     /// # Returns
     ///
     /// Returns the transaction signature if successful, or a ClientError if the operation fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The bonding curve account cannot be found
+    /// - The buy price calculation fails
+    /// - Transaction creation fails
+    /// - Transaction execution on Solana fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// # use solana_sdk::{commitment_config::CommitmentConfig, native_token::sol_to_lamports, pubkey, signature::Keypair};
+    /// # use std::sync::Arc;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let payer = Arc::new(Keypair::new());
+    /// # let commitment = CommitmentConfig::confirmed();
+    /// # let cluster = Cluster::devnet(commitment, PriorityFee::default());
+    /// # let client = PumpFun::new(payer, cluster);
+    /// let token_mint = pubkey!("SoMeTokenM1ntAddr3ssXXXXXXXXXXXXXXXXXXXXXXX");
+    ///
+    /// // Buy 0.01 SOL worth of tokens with 3% max slippage
+    /// let amount_sol = sol_to_lamports(0.01f64); // 0.01 SOL in lamports
+    /// let slippage_bps = Some(300); // 3%
+    ///
+    /// let signature = client.buy(token_mint, amount_sol, slippage_bps, None).await?;
+    /// println!("Tokens purchased! Signature: {}", signature);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn buy(
         &self,
         mint: Pubkey,
@@ -273,25 +422,17 @@ impl PumpFun {
         let buy_amount_with_slippage =
             utils::calculate_with_slippage_buy(amount_sol, slippage_basis_points.unwrap_or(500));
 
-        let mut request = self.program.request();
+        let mut instructions = Vec::new();
 
-        // Add priority fee if provided
-        if let Some(fee) = priority_fee {
-            if let Some(limit) = fee.unit_limit {
-                let limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(limit);
-                request = request.instruction(limit_ix);
-            }
-
-            if let Some(price) = fee.unit_price {
-                let price_ix = ComputeBudgetInstruction::set_compute_unit_price(price);
-                request = request.instruction(price_ix);
-            }
-        }
+        // Add priority fee if provided or default to cluster priority fee
+        let priority_fee = priority_fee.unwrap_or(self.cluster.priority_fee);
+        let priority_fee_ixs = Self::get_priority_fee_instructions(&priority_fee);
+        instructions.extend(priority_fee_ixs);
 
         // Create Associated Token Account if needed
         let ata: Pubkey = get_associated_token_address(&self.payer.pubkey(), &mint);
         if self.rpc.get_account(&ata).await.is_err() {
-            request = request.instruction(create_associated_token_account(
+            instructions.push(create_associated_token_account(
                 &self.payer.pubkey(),
                 &self.payer.pubkey(),
                 &mint,
@@ -300,7 +441,7 @@ impl PumpFun {
         }
 
         // Add buy instruction
-        request = request.instruction(instructions::buy(
+        instructions.push(instructions::buy(
             &self.payer,
             &mint,
             &global_account.fee_recipient,
@@ -310,30 +451,91 @@ impl PumpFun {
             },
         ));
 
-        // Add signer
-        request = request.signer(self.payer.clone());
-
-        // Send transaction
-        let signature: Signature = request
-            .send()
+        // Create and sign transaction
+        let recent_blockhash = self
+            .rpc
+            .get_latest_blockhash()
             .await
-            .map_err(error::ClientError::AnchorClientError)?;
+            .map_err(error::ClientError::SolanaClientError)?;
+
+        let transaction = Transaction::new_signed_with_payer(
+            &instructions,
+            Some(&self.payer.pubkey()),
+            &[&*self.payer],
+            recent_blockhash,
+        );
+
+        // Send and confirm transaction
+        let signature = self
+            .rpc
+            .send_and_confirm_transaction(&transaction)
+            .await
+            .map_err(error::ClientError::SolanaClientError)?;
 
         Ok(signature)
     }
 
     /// Sells tokens back to the bonding curve in exchange for SOL
     ///
+    /// This method sells tokens back to the bonding curve, receiving SOL in return. The amount of SOL
+    /// received is determined by the bonding curve formula for the specific token. As more tokens
+    /// are sold, the price decreases according to the curve function.
+    ///
+    /// The method:
+    /// 1. Determines how many tokens to sell (all tokens or a specific amount)
+    /// 2. Calculates how much SOL will be received for the tokens
+    /// 3. Executes the sell transaction with slippage protection
+    ///
+    /// A portion of the SOL is taken as a fee according to the global configuration.
+    ///
     /// # Arguments
     ///
     /// * `mint` - Public key of the token mint to sell
-    /// * `amount_token` - Optional amount of tokens to sell in base units. If None, sells entire balance
-    /// * `slippage_basis_points` - Optional maximum acceptable slippage in basis points (1 bp = 0.01%). Defaults to 500
-    /// * `priority_fee` - Optional priority fee configuration for compute units
+    /// * `amount_token` - Optional amount of tokens to sell in base units. If None, sells the entire balance
+    /// * `slippage_basis_points` - Optional maximum acceptable slippage in basis points (1 bp = 0.01%).
+    ///                             If None, defaults to 500 (5%)
+    /// * `priority_fee` - Optional priority fee configuration for compute units. If None, uses the
+    ///                    default from the cluster configuration
     ///
     /// # Returns
     ///
     /// Returns the transaction signature if successful, or a ClientError if the operation fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The token account cannot be found
+    /// - The bonding curve account cannot be found
+    /// - The sell price calculation fails
+    /// - Transaction creation fails
+    /// - Transaction execution on Solana fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair, pubkey};
+    /// # use std::sync::Arc;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let payer = Arc::new(Keypair::new());
+    /// # let commitment = CommitmentConfig::confirmed();
+    /// # let cluster = Cluster::devnet(commitment, PriorityFee::default());
+    /// # let client = PumpFun::new(payer, cluster);
+    /// let token_mint = pubkey!("SoMeTokenM1ntAddr3ssXXXXXXXXXXXXXXXXXXXXXXX");
+    ///
+    /// // Sell 1000 tokens with 2% max slippage
+    /// let amount_tokens = Some(1000);
+    /// let slippage_bps = Some(200); // 2%
+    ///
+    /// let signature = client.sell(token_mint, amount_tokens, slippage_bps, None).await?;
+    /// println!("Tokens sold! Signature: {}", signature);
+    ///
+    /// // Or sell all tokens with default slippage (5%)
+    /// let signature = client.sell(token_mint, None, None, None).await?;
+    /// println!("All tokens sold! Signature: {}", signature);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn sell(
         &self,
         mint: Pubkey,
@@ -356,23 +558,15 @@ impl PumpFun {
             slippage_basis_points.unwrap_or(500),
         );
 
-        let mut request = self.program.request();
+        let mut instructions = Vec::new();
 
-        // Add priority fee if provided
-        if let Some(fee) = priority_fee {
-            if let Some(limit) = fee.unit_limit {
-                let limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(limit);
-                request = request.instruction(limit_ix);
-            }
-
-            if let Some(price) = fee.unit_price {
-                let price_ix = ComputeBudgetInstruction::set_compute_unit_price(price);
-                request = request.instruction(price_ix);
-            }
-        }
+        // Add priority fee if provided or default to cluster priority fee
+        let priority_fee = priority_fee.unwrap_or(self.cluster.priority_fee);
+        let priority_fee_ixs = Self::get_priority_fee_instructions(&priority_fee);
+        instructions.extend(priority_fee_ixs);
 
         // Add sell instruction
-        request = request.instruction(instructions::sell(
+        instructions.push(instructions::sell(
             &self.payer,
             &mint,
             &global_account.fee_recipient,
@@ -382,23 +576,95 @@ impl PumpFun {
             },
         ));
 
-        // Add signer
-        request = request.signer(self.payer.clone());
-
-        // Send transaction
-        let signature: Signature = request
-            .send()
+        // Create and sign transaction
+        let recent_blockhash = self
+            .rpc
+            .get_latest_blockhash()
             .await
-            .map_err(error::ClientError::AnchorClientError)?;
+            .map_err(error::ClientError::SolanaClientError)?;
+
+        let transaction = Transaction::new_signed_with_payer(
+            &instructions,
+            Some(&self.payer.pubkey()),
+            &[&*self.payer],
+            recent_blockhash,
+        );
+
+        // Send and confirm transaction
+        let signature = self
+            .rpc
+            .send_and_confirm_transaction(&transaction)
+            .await
+            .map_err(error::ClientError::SolanaClientError)?;
 
         Ok(signature)
     }
 
+    /// Creates compute budget instructions for priority fees
+    ///
+    /// Generates Solana compute budget instructions based on the provided priority fee
+    /// configuration. These instructions are used to set the maximum compute units a
+    /// transaction can consume and the price per compute unit, which helps prioritize
+    /// transaction processing during network congestion.
+    ///
+    /// # Arguments
+    ///
+    /// * `priority_fee` - Priority fee configuration containing optional unit limit and unit price
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of instructions to set compute budget parameters, which can be
+    /// empty if no priority fee parameters are provided
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pumpfun::{PumpFun, common::PriorityFee};
+    /// # use solana_sdk::instruction::Instruction;
+    /// #
+    /// // Set both compute unit limit and price
+    /// let priority_fee = PriorityFee {
+    ///     unit_limit: Some(200_000),
+    ///     unit_price: Some(1_000), // 1000 micro-lamports per compute unit
+    /// };
+    ///
+    /// let compute_instructions: Vec<Instruction> = PumpFun::get_priority_fee_instructions(&priority_fee);
+    /// ```
+    pub fn get_priority_fee_instructions(priority_fee: &PriorityFee) -> Vec<Instruction> {
+        let mut instructions = Vec::new();
+
+        if let Some(limit) = priority_fee.unit_limit {
+            let limit_ix = ComputeBudgetInstruction::set_compute_unit_limit(limit);
+            instructions.push(limit_ix);
+        }
+
+        if let Some(price) = priority_fee.unit_price {
+            let price_ix = ComputeBudgetInstruction::set_compute_unit_price(price);
+            instructions.push(price_ix);
+        }
+
+        instructions
+    }
+
     /// Gets the Program Derived Address (PDA) for the global state account
+    ///
+    /// Derives the address of the global state account using the program ID and a
+    /// constant seed. The global state account contains program-wide configuration
+    /// such as fee settings and fee recipient.
     ///
     /// # Returns
     ///
     /// Returns the PDA public key derived from the GLOBAL_SEED
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use pumpfun::PumpFun;
+    /// # use solana_sdk::pubkey::Pubkey;
+    /// #
+    /// let global_pda: Pubkey = PumpFun::get_global_pda();
+    /// println!("Global state account: {}", global_pda);
+    /// ```
     pub fn get_global_pda() -> Pubkey {
         let seeds: &[&[u8]; 1] = &[constants::seeds::GLOBAL_SEED];
         let program_id: &Pubkey = &constants::accounts::PUMPFUN;
@@ -407,9 +673,23 @@ impl PumpFun {
 
     /// Gets the Program Derived Address (PDA) for the mint authority
     ///
+    /// Derives the address of the mint authority PDA using the program ID and a
+    /// constant seed. The mint authority PDA is the authority that can mint new
+    /// tokens for any token created through the Pump.fun program.
+    ///
     /// # Returns
     ///
     /// Returns the PDA public key derived from the MINT_AUTHORITY_SEED
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use pumpfun::PumpFun;
+    /// # use solana_sdk::pubkey::Pubkey;
+    /// #
+    /// let mint_authority: Pubkey = PumpFun::get_mint_authority_pda();
+    /// println!("Mint authority account: {}", mint_authority);
+    /// ```
     pub fn get_mint_authority_pda() -> Pubkey {
         let seeds: &[&[u8]; 1] = &[constants::seeds::MINT_AUTHORITY_SEED];
         let program_id: &Pubkey = &constants::accounts::PUMPFUN;
@@ -418,6 +698,10 @@ impl PumpFun {
 
     /// Gets the Program Derived Address (PDA) for a token's bonding curve account
     ///
+    /// Derives the address of a token's bonding curve account using the program ID,
+    /// a constant seed, and the token mint address. The bonding curve account stores
+    /// the state and parameters that govern the token's price dynamics.
+    ///
     /// # Arguments
     ///
     /// * `mint` - Public key of the token mint
@@ -425,6 +709,18 @@ impl PumpFun {
     /// # Returns
     ///
     /// Returns Some(PDA) if derivation succeeds, or None if it fails
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use pumpfun::PumpFun;
+    /// # use solana_sdk::{pubkey, pubkey::Pubkey};
+    /// #
+    /// let mint = pubkey!("TokenM1ntPubk3yXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+    /// if let Some(bonding_curve) = PumpFun::get_bonding_curve_pda(&mint) {
+    ///     println!("Bonding curve account: {}", bonding_curve);
+    /// }
+    /// ```
     pub fn get_bonding_curve_pda(mint: &Pubkey) -> Option<Pubkey> {
         let seeds: &[&[u8]; 2] = &[constants::seeds::BONDING_CURVE_SEED, mint.as_ref()];
         let program_id: &Pubkey = &constants::accounts::PUMPFUN;
@@ -434,6 +730,10 @@ impl PumpFun {
 
     /// Gets the Program Derived Address (PDA) for a token's metadata account
     ///
+    /// Derives the address of a token's metadata account following the Metaplex Token Metadata
+    /// standard. The metadata account stores information about the token such as name,
+    /// symbol, and URI pointing to additional metadata.
+    ///
     /// # Arguments
     ///
     /// * `mint` - Public key of the token mint
@@ -441,6 +741,17 @@ impl PumpFun {
     /// # Returns
     ///
     /// Returns the PDA public key for the token's metadata account
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use pumpfun::PumpFun;
+    /// # use solana_sdk::{pubkey, pubkey::Pubkey};
+    /// #
+    /// let mint = pubkey!("TokenM1ntPubk3yXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+    /// let metadata_pda = PumpFun::get_metadata_pda(&mint);
+    /// println!("Token metadata account: {}", metadata_pda);
+    /// ```
     pub fn get_metadata_pda(mint: &Pubkey) -> Pubkey {
         let seeds: &[&[u8]; 3] = &[
             constants::seeds::METADATA_SEED,
@@ -453,9 +764,40 @@ impl PumpFun {
 
     /// Gets the global state account data containing program-wide configuration
     ///
+    /// Fetches and deserializes the global state account which contains program-wide
+    /// configuration parameters such as:
+    /// - Fee basis points for trading
+    /// - Fee recipient account
+    /// - Bonding curve parameters
+    /// - Other platform-wide settings
+    ///
     /// # Returns
     ///
     /// Returns the deserialized GlobalAccount if successful, or a ClientError if the operation fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The account cannot be found on-chain
+    /// - The account data cannot be properly deserialized
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair};
+    /// # use std::sync::Arc;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let payer = Arc::new(Keypair::new());
+    /// # let commitment = CommitmentConfig::confirmed();
+    /// # let cluster = Cluster::devnet(commitment, PriorityFee::default());
+    /// # let client = PumpFun::new(payer, cluster);
+    /// let global = client.get_global_account().await?;
+    /// println!("Fee basis points: {}", global.fee_basis_points);
+    /// println!("Fee recipient: {}", global.fee_recipient);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn get_global_account(&self) -> Result<accounts::GlobalAccount, error::ClientError> {
         let global: Pubkey = Self::get_global_pda();
 
@@ -471,6 +813,13 @@ impl PumpFun {
 
     /// Gets a token's bonding curve account data containing pricing parameters
     ///
+    /// Fetches and deserializes a token's bonding curve account which contains the
+    /// state and parameters that determine the token's price dynamics, including:
+    /// - Current supply
+    /// - Reserve balance
+    /// - Bonding curve parameters
+    /// - Other token-specific configuration
+    ///
     /// # Arguments
     ///
     /// * `mint` - Public key of the token mint
@@ -478,6 +827,31 @@ impl PumpFun {
     /// # Returns
     ///
     /// Returns the deserialized BondingCurveAccount if successful, or a ClientError if the operation fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The bonding curve PDA cannot be derived
+    /// - The account cannot be found on-chain
+    /// - The account data cannot be properly deserialized
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair, pubkey};
+    /// # use std::sync::Arc;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let payer = Arc::new(Keypair::new());
+    /// # let commitment = CommitmentConfig::confirmed();
+    /// # let cluster = Cluster::devnet(commitment, PriorityFee::default());
+    /// # let client = PumpFun::new(payer, cluster);
+    /// let mint = pubkey!("TokenM1ntPubk3yXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+    /// let bonding_curve = client.get_bonding_curve_account(&mint).await?;
+    /// println!("Bonding Curve Account: {:#?}", bonding_curve);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn get_bonding_curve_account(
         &self,
         mint: &Pubkey,

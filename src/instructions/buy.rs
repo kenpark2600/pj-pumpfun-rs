@@ -4,7 +4,6 @@
 //! It includes the instruction data structure and helper function to build the Solana instruction.
 
 use crate::{constants, PumpFun};
-use anchor_spl::associated_token::get_associated_token_address;
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
@@ -12,6 +11,7 @@ use solana_sdk::{
     signature::Keypair,
     signer::Signer,
 };
+use spl_associated_token_account::get_associated_token_address;
 
 /// Instruction data for buying tokens from a bonding curve
 ///

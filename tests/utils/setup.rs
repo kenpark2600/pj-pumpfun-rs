@@ -3,8 +3,10 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
-use anchor_client::Cluster;
-use pumpfun::PumpFun;
+use pumpfun::{
+    common::{Cluster, PriorityFee},
+    PumpFun,
+};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     signature::{read_keypair_file, Keypair},
@@ -49,13 +51,8 @@ fn initialize_globals() {
     // Initialize the PumpFun client with configurable cluster URLs
     CLIENT
         .set(Mutex::new(PumpFun::new(
-            Cluster::Custom(
-                "http://127.0.0.1:8899".to_string(),
-                "ws://127.0.0.1:8900".to_string(),
-            ),
             PAYER.get().unwrap().clone(),
-            Some(CommitmentConfig::finalized()),
-            None,
+            Cluster::localnet(CommitmentConfig::finalized(), PriorityFee::default()),
         )))
         .unwrap_or_else(|_| panic!("CLIENT already set"));
 }

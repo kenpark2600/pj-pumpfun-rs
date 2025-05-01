@@ -36,8 +36,12 @@ cd <path-to-pumpfun-rs-repo>/scripts
 This script automatically downloads and configures a Solana test validator with the Pump.fun program and all required dependencies.
 
 ```rust
-use anchor_client::Cluster;
-use pumpfun::{accounts::BondingCurveAccount, utils::CreateTokenMetadata, PriorityFee, PumpFun};
+use pumpfun::{
+    accounts::BondingCurveAccount,
+    common::{Cluster, PriorityFee},
+    utils::CreateTokenMetadata,
+    PumpFun,
+};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     native_token::sol_to_lamports,
@@ -47,16 +51,12 @@ use solana_sdk::{
 };
 use std::sync::Arc;
 
+# tokio_test::block_on(async {
 // Create a new PumpFun client
 let payer = Arc::new(Keypair::new());
 let client = PumpFun::new(
-    Cluster::Custom(
-        "http://127.0.0.1:8899".to_string(),
-        "ws://127.0.0.1:8900".to_string(),
-    ),
     payer.clone(),
-    Some(CommitmentConfig::confirmed()),
-    None,
+    Cluster::localnet(CommitmentConfig::finalized(), PriorityFee::default()),
 );
 
 // Mint keypair
@@ -115,6 +115,7 @@ println!("Sell signature: {}", signature);
 The SDK is organized into several modules:
 
 - `accounts`: Account structs for deserializing on-chain state
+- `common`: Common utility functions and types
 - `constants`: Program constants like seeds and public keys
 - `error`: Custom error types for error handling
 - `instructions`: Transaction instruction builders
