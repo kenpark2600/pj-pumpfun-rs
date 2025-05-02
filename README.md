@@ -51,7 +51,6 @@ use solana_sdk::{
 };
 use std::sync::Arc;
 
-# tokio_test::block_on(async {
 // Create a new PumpFun client
 let payer = Arc::new(Keypair::new());
 let client = PumpFun::new(
