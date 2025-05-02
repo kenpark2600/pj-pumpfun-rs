@@ -110,6 +110,29 @@ println!("Sell signature: {}", signature);
 - Priority fee support for faster transactions
 - IPFS metadata storage
 
+## Feature Flags
+
+The SDK provides several feature flags that can be enabled or disabled based on your requirements:
+
+- `create-ata`: Enabled by default. Automatically creates Associated Token Accounts (ATAs) when needed during token purchases. Disable this if you want to handle ATA creation manually.
+
+- `close-ata`: Enabled by default. Automatically closes unused ATAs after selling all tokens, helping to reclaim rent. Disable to keep ATAs open after selling.
+
+- `versioned-tx`: Disabled by default. Enables support for Versioned Transactions with Address Lookup Tables (ALTs), which are useful for complex transactions with many accounts. When enabled, the SDK uses `VersionedTransaction` instead of legacy `Transaction`.
+
+To customize feature flags in your `Cargo.toml`:
+
+```toml
+# Use default features (create-ata and close-ata enabled)
+pumpfun = "3.0.2"
+
+# Disable all default features
+pumpfun = { version = "3.0.2", default-features = false }
+
+# Custom selection of features
+pumpfun = { version = "3.0.2", default-features = false, features = ["versioned-tx"] }
+```
+
 ## Architecture
 
 The SDK is organized into several modules:

@@ -3,6 +3,8 @@
 //! This module provides functionality for creating and managing token metadata,
 //! including uploading image and metadata to IPFS via the Pump.fun API.
 
+pub mod transaction;
+
 use isahc::AsyncReadResponseExt;
 use serde::{Deserialize, Serialize};
 use std::{fs::File, io::Read};

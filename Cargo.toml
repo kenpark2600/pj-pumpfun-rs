@@ -12,6 +12,12 @@ readme = "README.md"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["create-ata", "close-ata"]
+create-ata = []
+close-ata = []
+versioned-tx = []
+
 [dependencies]
 borsh = { version = "1.5.7", features = ["derive"] }
 isahc = "1.7.2"

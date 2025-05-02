@@ -16,12 +16,14 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signature},
     signer::Signer,
-    transaction::Transaction,
 };
-use spl_associated_token_account::{
-    get_associated_token_address, instruction::create_associated_token_account,
-};
+use spl_associated_token_account::get_associated_token_address;
+#[cfg(feature = "create-ata")]
+use spl_associated_token_account::instruction::create_associated_token_account;
+#[cfg(feature = "close-ata")]
+use spl_token::instruction::close_account;
 use std::sync::Arc;
+use utils::transaction::get_transaction;
 
 /// Main client for interacting with the Pump.fun program
 ///
@@ -128,6 +130,7 @@ impl PumpFun {
     /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}, utils::CreateTokenMetadata};
     /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair};
     /// # use std::sync::Arc;
+    /// #
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let payer = Arc::new(Keypair::new());
     /// # let commitment = CommitmentConfig::confirmed();
@@ -160,38 +163,24 @@ impl PumpFun {
             .await
             .map_err(error::ClientError::UploadMetadataError)?;
 
-        let mut instructions = Vec::new();
-
         // Add priority fee if provided or default to cluster priority fee
         let priority_fee = priority_fee.unwrap_or(self.cluster.priority_fee);
-        let priority_fee_ixs = Self::get_priority_fee_instructions(&priority_fee);
-        instructions.extend(priority_fee_ixs);
+        let mut instructions = Self::get_priority_fee_instructions(&priority_fee);
 
         // Add create token instruction
-        instructions.push(instructions::create(
-            &self.payer,
-            &mint,
-            instructions::Create {
-                name: ipfs.metadata.name,
-                symbol: ipfs.metadata.symbol,
-                uri: ipfs.metadata.image,
-                creator: self.payer.pubkey(),
-            },
-        ));
+        let create_ix = self.get_create_instruction(&mint, ipfs);
+        instructions.push(create_ix);
 
         // Create and sign transaction
-        let recent_blockhash = self
-            .rpc
-            .get_latest_blockhash()
-            .await
-            .map_err(error::ClientError::SolanaClientError)?;
-
-        let transaction = Transaction::new_signed_with_payer(
+        let transaction = get_transaction(
+            self.rpc.clone(),
+            self.payer.clone(),
             &instructions,
-            Some(&self.payer.pubkey()),
-            &[&*self.payer, &mint],
-            recent_blockhash,
-        );
+            Some(&[&mint]),
+            #[cfg(feature = "versioned-tx")]
+            None,
+        )
+        .await?;
 
         // Send and confirm transaction
         let signature = self
@@ -241,6 +230,7 @@ impl PumpFun {
     /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}, utils::CreateTokenMetadata};
     /// # use solana_sdk::{commitment_config::CommitmentConfig, native_token::sol_to_lamports, signature::Keypair};
     /// # use std::sync::Arc;
+    /// #
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let payer = Arc::new(Keypair::new());
     /// # let commitment = CommitmentConfig::confirmed();
@@ -279,66 +269,30 @@ impl PumpFun {
             .await
             .map_err(error::ClientError::UploadMetadataError)?;
 
-        // Get accounts and calculate buy amounts
-        let global_account = self.get_global_account().await?;
-        let buy_amount = global_account.get_initial_buy_price(amount_sol);
-        let buy_amount_with_slippage =
-            utils::calculate_with_slippage_buy(amount_sol, slippage_basis_points.unwrap_or(500));
-
-        let mut instructions = Vec::new();
-
         // Add priority fee if provided or default to cluster priority fee
         let priority_fee = priority_fee.unwrap_or(self.cluster.priority_fee);
-        let priority_fee_ixs = Self::get_priority_fee_instructions(&priority_fee);
-        instructions.extend(priority_fee_ixs);
+        let mut instructions = Self::get_priority_fee_instructions(&priority_fee);
 
         // Add create token instruction
-        instructions.push(instructions::create(
-            &self.payer,
-            &mint,
-            instructions::Create {
-                name: ipfs.metadata.name,
-                symbol: ipfs.metadata.symbol,
-                uri: ipfs.metadata.image,
-                creator: self.payer.pubkey(),
-            },
-        ));
-
-        // Create Associated Token Account if needed
-        let ata: Pubkey = get_associated_token_address(&self.payer.pubkey(), &mint.pubkey());
-        if self.rpc.get_account(&ata).await.is_err() {
-            instructions.push(create_associated_token_account(
-                &self.payer.pubkey(),
-                &self.payer.pubkey(),
-                &mint.pubkey(),
-                &constants::accounts::TOKEN_PROGRAM,
-            ));
-        }
+        let create_ix = self.get_create_instruction(&mint, ipfs);
+        instructions.push(create_ix);
 
         // Add buy instruction
-        instructions.push(instructions::buy(
-            &self.payer,
-            &mint.pubkey(),
-            &global_account.fee_recipient,
-            instructions::Buy {
-                amount: buy_amount,
-                max_sol_cost: buy_amount_with_slippage,
-            },
-        ));
+        let buy_ix = self
+            .get_buy_instructions(mint.pubkey(), amount_sol, slippage_basis_points)
+            .await?;
+        instructions.extend(buy_ix);
 
         // Create and sign transaction
-        let recent_blockhash = self
-            .rpc
-            .get_latest_blockhash()
-            .await
-            .map_err(error::ClientError::SolanaClientError)?;
-
-        let transaction = Transaction::new_signed_with_payer(
+        let transaction = get_transaction(
+            self.rpc.clone(),
+            self.payer.clone(),
             &instructions,
-            Some(&self.payer.pubkey()),
-            &[&*self.payer, &mint],
-            recent_blockhash,
-        );
+            Some(&[&mint]),
+            #[cfg(feature = "versioned-tx")]
+            None,
+        )
+        .await?;
 
         // Send and confirm transaction
         let signature = self
@@ -390,6 +344,7 @@ impl PumpFun {
     /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
     /// # use solana_sdk::{commitment_config::CommitmentConfig, native_token::sol_to_lamports, pubkey, signature::Keypair};
     /// # use std::sync::Arc;
+    /// #
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let payer = Arc::new(Keypair::new());
     /// # let commitment = CommitmentConfig::confirmed();
@@ -413,57 +368,26 @@ impl PumpFun {
         slippage_basis_points: Option<u64>,
         priority_fee: Option<PriorityFee>,
     ) -> Result<Signature, error::ClientError> {
-        // Get accounts and calculate buy amounts
-        let global_account = self.get_global_account().await?;
-        let bonding_curve_account = self.get_bonding_curve_account(&mint).await?;
-        let buy_amount = bonding_curve_account
-            .get_buy_price(amount_sol)
-            .map_err(error::ClientError::BondingCurveError)?;
-        let buy_amount_with_slippage =
-            utils::calculate_with_slippage_buy(amount_sol, slippage_basis_points.unwrap_or(500));
-
-        let mut instructions = Vec::new();
-
         // Add priority fee if provided or default to cluster priority fee
         let priority_fee = priority_fee.unwrap_or(self.cluster.priority_fee);
-        let priority_fee_ixs = Self::get_priority_fee_instructions(&priority_fee);
-        instructions.extend(priority_fee_ixs);
-
-        // Create Associated Token Account if needed
-        let ata: Pubkey = get_associated_token_address(&self.payer.pubkey(), &mint);
-        if self.rpc.get_account(&ata).await.is_err() {
-            instructions.push(create_associated_token_account(
-                &self.payer.pubkey(),
-                &self.payer.pubkey(),
-                &mint,
-                &constants::accounts::TOKEN_PROGRAM,
-            ));
-        }
+        let mut instructions = Self::get_priority_fee_instructions(&priority_fee);
 
         // Add buy instruction
-        instructions.push(instructions::buy(
-            &self.payer,
-            &mint,
-            &global_account.fee_recipient,
-            instructions::Buy {
-                amount: buy_amount,
-                max_sol_cost: buy_amount_with_slippage,
-            },
-        ));
+        let buy_ix = self
+            .get_buy_instructions(mint, amount_sol, slippage_basis_points)
+            .await?;
+        instructions.extend(buy_ix);
 
         // Create and sign transaction
-        let recent_blockhash = self
-            .rpc
-            .get_latest_blockhash()
-            .await
-            .map_err(error::ClientError::SolanaClientError)?;
-
-        let transaction = Transaction::new_signed_with_payer(
+        let transaction = get_transaction(
+            self.rpc.clone(),
+            self.payer.clone(),
             &instructions,
-            Some(&self.payer.pubkey()),
-            &[&*self.payer],
-            recent_blockhash,
-        );
+            None,
+            #[cfg(feature = "versioned-tx")]
+            None,
+        )
+        .await?;
 
         // Send and confirm transaction
         let signature = self
@@ -516,6 +440,7 @@ impl PumpFun {
     /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
     /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair, pubkey};
     /// # use std::sync::Arc;
+    /// #
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let payer = Arc::new(Keypair::new());
     /// # let commitment = CommitmentConfig::confirmed();
@@ -543,52 +468,26 @@ impl PumpFun {
         slippage_basis_points: Option<u64>,
         priority_fee: Option<PriorityFee>,
     ) -> Result<Signature, error::ClientError> {
-        // Get accounts and calculate sell amounts
-        let ata: Pubkey = get_associated_token_address(&self.payer.pubkey(), &mint);
-        let balance = self.rpc.get_token_account_balance(&ata).await?;
-        let balance_u64: u64 = balance.amount.parse::<u64>().unwrap();
-        let amount = amount_token.unwrap_or(balance_u64);
-        let global_account = self.get_global_account().await?;
-        let bonding_curve_account = self.get_bonding_curve_account(&mint).await?;
-        let min_sol_output = bonding_curve_account
-            .get_sell_price(amount, global_account.fee_basis_points)
-            .map_err(error::ClientError::BondingCurveError)?;
-        let min_sol_output = utils::calculate_with_slippage_sell(
-            min_sol_output,
-            slippage_basis_points.unwrap_or(500),
-        );
-
-        let mut instructions = Vec::new();
-
         // Add priority fee if provided or default to cluster priority fee
         let priority_fee = priority_fee.unwrap_or(self.cluster.priority_fee);
-        let priority_fee_ixs = Self::get_priority_fee_instructions(&priority_fee);
-        instructions.extend(priority_fee_ixs);
+        let mut instructions = Self::get_priority_fee_instructions(&priority_fee);
 
         // Add sell instruction
-        instructions.push(instructions::sell(
-            &self.payer,
-            &mint,
-            &global_account.fee_recipient,
-            instructions::Sell {
-                amount,
-                min_sol_output,
-            },
-        ));
+        let sell_ix = self
+            .get_sell_instructions(mint, amount_token, slippage_basis_points)
+            .await?;
+        instructions.extend(sell_ix);
 
         // Create and sign transaction
-        let recent_blockhash = self
-            .rpc
-            .get_latest_blockhash()
-            .await
-            .map_err(error::ClientError::SolanaClientError)?;
-
-        let transaction = Transaction::new_signed_with_payer(
+        let transaction = get_transaction(
+            self.rpc.clone(),
+            self.payer.clone(),
             &instructions,
-            Some(&self.payer.pubkey()),
-            &[&*self.payer],
-            recent_blockhash,
-        );
+            None,
+            #[cfg(feature = "versioned-tx")]
+            None,
+        )
+        .await?;
 
         // Send and confirm transaction
         let signature = self
@@ -644,6 +543,298 @@ impl PumpFun {
         }
 
         instructions
+    }
+
+    /// Creates an instruction for initializing a new token
+    ///
+    /// Generates a Solana instruction to create a new token with a bonding curve on Pump.fun.
+    /// This instruction will initialize the token mint, metadata, and bonding curve accounts.
+    ///
+    /// # Arguments
+    ///
+    /// * `mint` - Keypair for the new token mint account that will be created
+    /// * `ipfs` - Token metadata response from IPFS upload containing name, symbol, and URI
+    ///
+    /// # Returns
+    ///
+    /// Returns a Solana instruction for creating a new token
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}, utils};
+    /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair};
+    /// # use std::sync::Arc;
+    /// #
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let payer = Arc::new(Keypair::new());
+    /// # let commitment = CommitmentConfig::confirmed();
+    /// # let cluster = Cluster::devnet(commitment, PriorityFee::default());
+    /// # let client = PumpFun::new(payer, cluster);
+    /// #
+    /// let mint = Keypair::new();
+    /// let metadata_response = utils::create_token_metadata(
+    ///     utils::CreateTokenMetadata {
+    ///         name: "Example Token".to_string(),
+    ///         symbol: "EXTKN".to_string(),
+    ///         description: "An example token".to_string(),
+    ///         file: "path/to/image.png".to_string(),
+    ///         twitter: None,
+    ///         telegram: None,
+    ///         website: None,
+    ///     }
+    /// ).await?;
+    ///
+    /// let create_instruction = client.get_create_instruction(&mint, metadata_response);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_create_instruction(
+        &self,
+        mint: &Keypair,
+        ipfs: utils::TokenMetadataResponse,
+    ) -> Instruction {
+        instructions::create(
+            &self.payer,
+            &mint,
+            instructions::Create {
+                name: ipfs.metadata.name,
+                symbol: ipfs.metadata.symbol,
+                uri: ipfs.metadata.image,
+                creator: self.payer.pubkey(),
+            },
+        )
+    }
+
+    /// Generates instructions for buying tokens from a bonding curve
+    ///
+    /// Creates a set of Solana instructions needed to purchase tokens using SOL. These
+    /// instructions may include creating an associated token account if needed, and the actual
+    /// buy instruction with slippage protection.
+    ///
+    /// # Arguments
+    ///
+    /// * `mint` - Public key of the token mint to buy
+    /// * `amount_sol` - Amount of SOL to spend, in lamports (1 SOL = 1,000,000,000 lamports)
+    /// * `slippage_basis_points` - Optional maximum acceptable slippage in basis points (1 bp = 0.01%).
+    ///                             If None, defaults to 500 (5%)
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of Solana instructions if successful, or a ClientError if the operation fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The global account or bonding curve account cannot be fetched
+    /// - The buy price calculation fails
+    /// - Token account-related operations fail
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// # use solana_sdk::{commitment_config::CommitmentConfig, native_token::sol_to_lamports, signature::Keypair, pubkey};
+    /// # use std::sync::Arc;
+    /// #
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let payer = Arc::new(Keypair::new());
+    /// # let commitment = CommitmentConfig::confirmed();
+    /// # let cluster = Cluster::devnet(commitment, PriorityFee::default());
+    /// # let client = PumpFun::new(payer, cluster);
+    /// #
+    /// let mint = pubkey!("TokenM1ntPubk3yXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+    /// let amount_sol = sol_to_lamports(0.01); // 0.01 SOL
+    /// let slippage_bps = Some(300); // 3%
+    ///
+    /// let buy_instructions = client.get_buy_instructions(mint, amount_sol, slippage_bps).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn get_buy_instructions(
+        &self,
+        mint: Pubkey,
+        amount_sol: u64,
+        slippage_basis_points: Option<u64>,
+    ) -> Result<Vec<Instruction>, error::ClientError> {
+        // Get accounts and calculate buy amounts
+        let global_account = self.get_global_account().await?;
+        let bonding_curve_account = self.get_bonding_curve_account(&mint).await?;
+        let buy_amount = bonding_curve_account
+            .get_buy_price(amount_sol)
+            .map_err(error::ClientError::BondingCurveError)?;
+        let buy_amount_with_slippage =
+            utils::calculate_with_slippage_buy(amount_sol, slippage_basis_points.unwrap_or(500));
+
+        let mut instructions = Vec::new();
+
+        // Create Associated Token Account if needed
+        #[cfg(feature = "create-ata")]
+        {
+            let ata: Pubkey = get_associated_token_address(&self.payer.pubkey(), &mint);
+            if self.rpc.get_account(&ata).await.is_err() {
+                instructions.push(create_associated_token_account(
+                    &self.payer.pubkey(),
+                    &self.payer.pubkey(),
+                    &mint,
+                    &constants::accounts::TOKEN_PROGRAM,
+                ));
+            }
+        }
+
+        // Add buy instruction
+        instructions.push(instructions::buy(
+            &self.payer,
+            &mint,
+            &global_account.fee_recipient,
+            instructions::Buy {
+                amount: buy_amount,
+                max_sol_cost: buy_amount_with_slippage,
+            },
+        ));
+
+        Ok(instructions)
+    }
+
+    /// Generates instructions for selling tokens back to a bonding curve
+    ///
+    /// Creates a set of Solana instructions needed to sell tokens in exchange for SOL. These
+    /// instructions include the sell instruction with slippage protection and may include
+    /// closing the associated token account if all tokens are being sold and the feature
+    /// is enabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `mint` - Public key of the token mint to sell
+    /// * `amount_token` - Optional amount of tokens to sell in base units. If None, sells the entire balance
+    /// * `slippage_basis_points` - Optional maximum acceptable slippage in basis points (1 bp = 0.01%).
+    ///                             If None, defaults to 500 (5%)
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of Solana instructions if successful, or a ClientError if the operation fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The token account or token balance cannot be fetched
+    /// - The global account or bonding curve account cannot be fetched
+    /// - The sell price calculation fails
+    /// - Token account closing operations fail (when applicable)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair, pubkey};
+    /// # use std::sync::Arc;
+    /// #
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let payer = Arc::new(Keypair::new());
+    /// # let commitment = CommitmentConfig::confirmed();
+    /// # let cluster = Cluster::devnet(commitment, PriorityFee::default());
+    /// # let client = PumpFun::new(payer, cluster);
+    /// #
+    /// let mint = pubkey!("TokenM1ntPubk3yXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+    /// let amount_tokens = Some(1000); // Sell 1000 tokens
+    /// let slippage_bps = Some(200); // 2%
+    ///
+    /// let sell_instructions = client.get_sell_instructions(mint, amount_tokens, slippage_bps).await?;
+    ///
+    /// // Or to sell all tokens:
+    /// let sell_all_instructions = client.get_sell_instructions(mint, None, None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn get_sell_instructions(
+        &self,
+        mint: Pubkey,
+        amount_token: Option<u64>,
+        slippage_basis_points: Option<u64>,
+    ) -> Result<Vec<Instruction>, error::ClientError> {
+        // Get ATA
+        let ata: Pubkey = get_associated_token_address(&self.payer.pubkey(), &mint);
+
+        // Get token balance
+        let token_balance = if amount_token.is_none() || cfg!(feature = "close-ata") {
+            // We need the balance if amount_token is None OR if the close-ata feature is enabled
+            let balance = self.rpc.get_token_account_balance(&ata).await?;
+            Some(balance.amount.parse::<u64>().unwrap())
+        } else {
+            None
+        };
+
+        // Determine amount to sell
+        let amount = amount_token.unwrap_or_else(|| token_balance.unwrap());
+
+        // Calculate min sol output
+        let global_account = self.get_global_account().await?;
+        let bonding_curve_account = self.get_bonding_curve_account(&mint).await?;
+        let min_sol_output = bonding_curve_account
+            .get_sell_price(amount, global_account.fee_basis_points)
+            .map_err(error::ClientError::BondingCurveError)?;
+        let min_sol_output = utils::calculate_with_slippage_sell(
+            min_sol_output,
+            slippage_basis_points.unwrap_or(500),
+        );
+
+        let mut instructions = Vec::new();
+
+        // Add sell instruction
+        instructions.push(instructions::sell(
+            &self.payer,
+            &mint,
+            &global_account.fee_recipient,
+            instructions::Sell {
+                amount,
+                min_sol_output,
+            },
+        ));
+
+        // Close account if balance equals amount
+        #[cfg(feature = "close-ata")]
+        {
+            // Token balance should be guaranteed to be available at this point
+            // due to our fetch logic in the beginning of the function
+            if let Some(balance) = token_balance {
+                // Only close the account if we're selling all tokens
+                if balance == amount {
+                    let token_program = constants::accounts::TOKEN_PROGRAM;
+
+                    // Verify the token account exists before attempting to close it
+                    if self.rpc.get_account(&ata).await.is_ok() {
+                        // Create instruction to close the ATA
+                        let close_instruction = close_account(
+                            &token_program,
+                            &ata,
+                            &self.payer.pubkey(),
+                            &self.payer.pubkey(),
+                            &[&self.payer.pubkey()],
+                        )
+                        .map_err(|err| {
+                            error::ClientError::OtherError(format!(
+                                "Failed to create close account instruction: pubkey={}: {}",
+                                ata, err
+                            ))
+                        })?;
+
+                        instructions.push(close_instruction);
+                    } else {
+                        // Log warning but don't fail the transaction if account doesn't exist
+                        eprintln!(
+                            "Warning: Cannot close token account {}, it doesn't exist",
+                            ata
+                        );
+                    }
+                }
+            } else {
+                // This case should not occur due to our balance fetch logic,
+                // but handle it gracefully just in case
+                eprintln!("Warning: Token balance unavailable, not closing account");
+            }
+        }
+
+        Ok(instructions)
     }
 
     /// Gets the Program Derived Address (PDA) for the global state account

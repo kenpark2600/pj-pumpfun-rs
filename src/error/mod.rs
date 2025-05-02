@@ -12,10 +12,7 @@
 //! - `BorshError`: An error occurred while serializing or deserializing data using Borsh.
 //! - `SolanaClientError`: An error occurred while interacting with the Solana RPC client.
 //! - `UploadMetadataError`: An error occurred while uploading metadata to IPFS.
-//! - `InvalidInput`: Invalid input parameters were provided.
-//! - `InsufficientFunds`: Insufficient funds for a transaction.
-//! - `SimulationError`: Transaction simulation failed.
-//! - `RateLimitExceeded`: Rate limit exceeded.
+//! - `OtherError`: An error occurred that is not covered by the other error types.
 
 #[derive(Debug)]
 pub enum ClientError {
@@ -29,14 +26,8 @@ pub enum ClientError {
     SolanaClientError(solana_client::client_error::ClientError),
     /// Error uploading metadata
     UploadMetadataError(Box<dyn std::error::Error>),
-    /// Invalid input parameters
-    InvalidInput(&'static str),
-    /// Insufficient funds for transaction
-    InsufficientFunds,
-    /// Transaction simulation failed
-    SimulationError(String),
-    /// Rate limit exceeded
-    RateLimitExceeded,
+    /// Other error
+    OtherError(String),
 }
 
 impl std::fmt::Display for ClientError {
@@ -47,10 +38,7 @@ impl std::fmt::Display for ClientError {
             Self::BorshError(err) => write!(f, "Borsh serialization error: {}", err),
             Self::SolanaClientError(err) => write!(f, "Solana client error: {}", err),
             Self::UploadMetadataError(err) => write!(f, "Metadata upload error: {}", err),
-            Self::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
-            Self::InsufficientFunds => write!(f, "Insufficient funds for transaction"),
-            Self::SimulationError(msg) => write!(f, "Transaction simulation failed: {}", msg),
-            Self::RateLimitExceeded => write!(f, "Rate limit exceeded"),
+            Self::OtherError(msg) => write!(f, "Other error: {}", msg),
         }
     }
 }
