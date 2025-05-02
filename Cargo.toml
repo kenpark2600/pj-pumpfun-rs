@@ -1,12 +1,12 @@
 [package]
 name = "pumpfun"
-version = "3.0.2"
+version = "4.0.0"
 edition = "2021"
 authors = ["Rapheal Bamidele <nhuxhr@gmail.com>"]
 repository = "https://github.com/nhuxhr/pumpfun-rs"
 description = "Rust SDK to interact with the Pump.fun Solana program."
 license = "MIT OR Apache-2.0"
-keywords = ["solana", "memecoins", "pumpfun", "cpi", "sdk"]
+keywords = ["solana", "token-creation", "memecoins", "pumpfun", "sdk"]
 readme = "README.md"
 
 [lib]

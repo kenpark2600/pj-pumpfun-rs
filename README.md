@@ -124,13 +124,13 @@ To customize feature flags in your `Cargo.toml`:
 
 ```toml
 # Use default features (create-ata and close-ata enabled)
-pumpfun = "3.0.2"
+pumpfun = "4.0.0"
 
 # Disable all default features
-pumpfun = { version = "3.0.2", default-features = false }
+pumpfun = { version = "4.0.0", default-features = false }
 
 # Custom selection of features
-pumpfun = { version = "3.0.2", default-features = false, features = ["versioned-tx"] }
+pumpfun = { version = "4.0.0", default-features = false, features = ["versioned-tx"] }
 ```
 
 ## Architecture
