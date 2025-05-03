@@ -8,7 +8,7 @@ pub mod instructions;
 pub mod utils;
 
 use borsh::BorshDeserialize;
-use common::{Cluster, PriorityFee};
+use common::types::{Cluster, PriorityFee};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
@@ -34,7 +34,7 @@ use utils::transaction::get_transaction;
 /// # Examples
 ///
 /// ```no_run
-/// use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+/// use pumpfun::{PumpFun, common::types::{Cluster, PriorityFee}};
 /// use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair};
 /// use std::sync::Arc;
 ///
@@ -73,7 +73,7 @@ impl PumpFun {
     /// # Examples
     ///
     /// ```no_run
-    /// use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// use pumpfun::{PumpFun, common::types::{Cluster, PriorityFee}};
     /// use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair};
     /// use std::sync::Arc;
     ///
@@ -127,7 +127,7 @@ impl PumpFun {
     /// # Examples
     ///
     /// ```no_run
-    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}, utils::CreateTokenMetadata};
+    /// # use pumpfun::{PumpFun, common::types::{Cluster, PriorityFee}, utils::CreateTokenMetadata};
     /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair};
     /// # use std::sync::Arc;
     /// #
@@ -227,7 +227,7 @@ impl PumpFun {
     /// # Examples
     ///
     /// ```no_run
-    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}, utils::CreateTokenMetadata};
+    /// # use pumpfun::{PumpFun, common::types::{Cluster, PriorityFee}, utils::CreateTokenMetadata};
     /// # use solana_sdk::{commitment_config::CommitmentConfig, native_token::sol_to_lamports, signature::Keypair};
     /// # use std::sync::Arc;
     /// #
@@ -341,7 +341,7 @@ impl PumpFun {
     /// # Examples
     ///
     /// ```no_run
-    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// # use pumpfun::{PumpFun, common::types::{Cluster, PriorityFee}};
     /// # use solana_sdk::{commitment_config::CommitmentConfig, native_token::sol_to_lamports, pubkey, signature::Keypair};
     /// # use std::sync::Arc;
     /// #
@@ -437,7 +437,7 @@ impl PumpFun {
     /// # Examples
     ///
     /// ```no_run
-    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// # use pumpfun::{PumpFun, common::types::{Cluster, PriorityFee}};
     /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair, pubkey};
     /// # use std::sync::Arc;
     /// #
@@ -499,6 +499,103 @@ impl PumpFun {
         Ok(signature)
     }
 
+    /// Subscribes to real-time events from the Pump.fun program
+    ///
+    /// This method establishes a WebSocket connection to the Solana cluster and subscribes
+    /// to program log events from the Pump.fun program. It parses the emitted events into
+    /// structured data types and delivers them through the provided callback function.
+    ///
+    /// Event types include:
+    /// - `CreateEvent`: Emitted when a new token is created
+    /// - `TradeEvent`: Emitted when tokens are bought or sold
+    /// - `CompleteEvent`: Emitted when a bonding curve operation completes
+    /// - `SetParamsEvent`: Emitted when global parameters are updated
+    ///
+    /// # Arguments
+    ///
+    /// * `commitment` - Optional commitment level for the subscription. If None, uses the
+    ///                  default from the cluster configuration
+    /// * `callback` - A function that will be called for each event with the following parameters:
+    ///   * `signature`: The transaction signature as a String
+    ///   * `event`: The parsed PumpFunEvent if successful, or None if parsing failed
+    ///   * `error`: Any error that occurred during parsing, or None if successful
+    ///   * `response`: The complete RPC logs response for additional context
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Subscription` object that manages the lifecycle of the subscription.
+    /// When this object is dropped, the subscription is automatically terminated. If
+    /// the subscription cannot be established, returns a ClientError.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The WebSocket connection cannot be established
+    /// - The subscription request fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pumpfun::{PumpFun, common::types::{Cluster, PriorityFee}};
+    /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair};
+    /// # use std::{sync::Arc, error::Error};
+    /// #
+    /// # async fn example() -> Result<(), Box<dyn Error>> {
+    /// # let payer = Arc::new(Keypair::new());
+    /// # let commitment = CommitmentConfig::confirmed();
+    /// # let cluster = Cluster::devnet(commitment, PriorityFee::default());
+    /// # let client = PumpFun::new(payer, cluster);
+    /// #
+    /// // Subscribe to token events
+    /// let subscription = client.subscribe(None, |signature, event, error, _| {
+    ///     match event {
+    ///         Some(pumpfun::common::stream::PumpFunEvent::Create(create_event)) => {
+    ///             println!("New token created: {} ({})", create_event.name, create_event.symbol);
+    ///             println!("Mint address: {}", create_event.mint);
+    ///         },
+    ///         Some(pumpfun::common::stream::PumpFunEvent::Trade(trade_event)) => {
+    ///             let action = if trade_event.is_buy { "bought" } else { "sold" };
+    ///             println!(
+    ///                 "User {} {} {} tokens for {} SOL",
+    ///                 trade_event.user,
+    ///                 action,
+    ///                 trade_event.token_amount,
+    ///                 trade_event.sol_amount as f64 / 1_000_000_000.0
+    ///             );
+    ///         },
+    ///         Some(event) => println!("Other event received: {:#?}", event),
+    ///         None => {
+    ///             if let Some(err) = error {
+    ///                 eprintln!("Error parsing event in tx {}: {}", signature, err);
+    ///             }
+    ///         }
+    ///     }
+    /// }).await?;
+    ///
+    /// // Keep the subscription active
+    /// // When no longer needed, drop the subscription to unsubscribe
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "stream")]
+    pub async fn subscribe<F>(
+        &self,
+        commitment: Option<solana_sdk::commitment_config::CommitmentConfig>,
+        callback: F,
+    ) -> Result<common::stream::Subscription, error::ClientError>
+    where
+        F: Fn(
+                String,
+                Option<common::stream::PumpFunEvent>,
+                Option<Box<dyn std::error::Error>>,
+                solana_client::rpc_response::Response<solana_client::rpc_response::RpcLogsResponse>,
+            ) + Send
+            + Sync
+            + 'static,
+    {
+        common::stream::subscribe(self.cluster.clone(), commitment, callback).await
+    }
+
     /// Creates compute budget instructions for priority fees
     ///
     /// Generates Solana compute budget instructions based on the provided priority fee
@@ -518,7 +615,7 @@ impl PumpFun {
     /// # Examples
     ///
     /// ```no_run
-    /// # use pumpfun::{PumpFun, common::PriorityFee};
+    /// # use pumpfun::{PumpFun, common::types::PriorityFee};
     /// # use solana_sdk::instruction::Instruction;
     /// #
     /// // Set both compute unit limit and price
@@ -562,7 +659,7 @@ impl PumpFun {
     /// # Examples
     ///
     /// ```no_run
-    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}, utils};
+    /// # use pumpfun::{PumpFun, common::types::{Cluster, PriorityFee}, utils};
     /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair};
     /// # use std::sync::Arc;
     /// #
@@ -596,7 +693,7 @@ impl PumpFun {
     ) -> Instruction {
         instructions::create(
             &self.payer,
-            &mint,
+            mint,
             instructions::Create {
                 name: ipfs.metadata.name,
                 symbol: ipfs.metadata.symbol,
@@ -633,7 +730,7 @@ impl PumpFun {
     /// # Examples
     ///
     /// ```no_run
-    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// # use pumpfun::{PumpFun, common::types::{Cluster, PriorityFee}};
     /// # use solana_sdk::{commitment_config::CommitmentConfig, native_token::sol_to_lamports, signature::Keypair, pubkey};
     /// # use std::sync::Arc;
     /// #
@@ -725,7 +822,7 @@ impl PumpFun {
     /// # Examples
     ///
     /// ```no_run
-    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// # use pumpfun::{PumpFun, common::types::{Cluster, PriorityFee}};
     /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair, pubkey};
     /// # use std::sync::Arc;
     /// #
@@ -975,7 +1072,7 @@ impl PumpFun {
     /// # Examples
     ///
     /// ```no_run
-    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// # use pumpfun::{PumpFun, common::types::{Cluster, PriorityFee}};
     /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair};
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -1029,7 +1126,7 @@ impl PumpFun {
     /// # Examples
     ///
     /// ```no_run
-    /// # use pumpfun::{PumpFun, common::{Cluster, PriorityFee}};
+    /// # use pumpfun::{PumpFun, common::types::{Cluster, PriorityFee}};
     /// # use solana_sdk::{commitment_config::CommitmentConfig, signature::Keypair, pubkey};
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {

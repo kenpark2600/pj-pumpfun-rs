@@ -4,7 +4,7 @@ use std::{
 };
 
 use pumpfun::{
-    common::{Cluster, PriorityFee},
+    common::types::{Cluster, PriorityFee},
     PumpFun,
 };
 use solana_sdk::{

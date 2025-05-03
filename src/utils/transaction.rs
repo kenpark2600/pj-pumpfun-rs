@@ -51,7 +51,7 @@ use crate::error;
 ///
 /// ```no_run
 /// # use pumpfun::{
-/// #     common::{Cluster, PriorityFee},
+/// #     common::types::{Cluster, PriorityFee},
 /// #     utils::transaction::get_transaction,
 /// #     PumpFun,
 /// # };

@@ -9,6 +9,9 @@ license = "MIT OR Apache-2.0"
 keywords = ["solana", "token-creation", "memecoins", "pumpfun", "sdk"]
 readme = "README.md"
 
+[package.metadata.docs.rs]
+all-features = true
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -17,9 +20,12 @@ default = ["create-ata", "close-ata"]
 create-ata = []
 close-ata = []
 versioned-tx = []
+stream = ["dep:base64", "dep:futures"]
 
 [dependencies]
+base64 = { version = "0.22.1", optional = true }
 borsh = { version = "1.5.7", features = ["derive"] }
+futures = { version = "0.3.31", optional = true }
 isahc = "1.7.2"
 mpl-token-metadata = "5.1.0"
 serde = { version = "1.0.215", features = ["derive"] }

@@ -11,6 +11,7 @@
 //! - `BondingCurveError`: An error occurred while interacting with the bonding curve.
 //! - `BorshError`: An error occurred while serializing or deserializing data using Borsh.
 //! - `SolanaClientError`: An error occurred while interacting with the Solana RPC client.
+//! - `PubsubClientError`: An error occurred while interacting with the Solana Pubsub client.
 //! - `UploadMetadataError`: An error occurred while uploading metadata to IPFS.
 //! - `OtherError`: An error occurred that is not covered by the other error types.
 
@@ -24,6 +25,9 @@ pub enum ClientError {
     BorshError(std::io::Error),
     /// Error from Solana RPC client
     SolanaClientError(solana_client::client_error::ClientError),
+    /// Error from Solana Pubsub client
+    #[cfg(feature = "stream")]
+    PubsubClientError(solana_client::pubsub_client::PubsubClientError),
     /// Error uploading metadata
     UploadMetadataError(Box<dyn std::error::Error>),
     /// Other error
@@ -37,6 +41,8 @@ impl std::fmt::Display for ClientError {
             Self::BondingCurveError(msg) => write!(f, "Bonding curve error: {}", msg),
             Self::BorshError(err) => write!(f, "Borsh serialization error: {}", err),
             Self::SolanaClientError(err) => write!(f, "Solana client error: {}", err),
+            #[cfg(feature = "stream")]
+            Self::PubsubClientError(err) => write!(f, "Solana pubsub client error: {}", err),
             Self::UploadMetadataError(err) => write!(f, "Metadata upload error: {}", err),
             Self::OtherError(msg) => write!(f, "Other error: {}", msg),
         }
@@ -48,6 +54,8 @@ impl std::error::Error for ClientError {
         match self {
             Self::BorshError(err) => Some(err),
             Self::SolanaClientError(err) => Some(err),
+            #[cfg(feature = "stream")]
+            Self::PubsubClientError(err) => Some(err),
             Self::UploadMetadataError(err) => Some(err.as_ref()),
             _ => None,
         }
@@ -57,5 +65,12 @@ impl std::error::Error for ClientError {
 impl From<solana_client::client_error::ClientError> for ClientError {
     fn from(err: solana_client::client_error::ClientError) -> Self {
         Self::SolanaClientError(err)
+    }
+}
+
+#[cfg(feature = "stream")]
+impl From<solana_client::pubsub_client::PubsubClientError> for ClientError {
+    fn from(err: solana_client::pubsub_client::PubsubClientError) -> Self {
+        Self::PubsubClientError(err)
     }
 }

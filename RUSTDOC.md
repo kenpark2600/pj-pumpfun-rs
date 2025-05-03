@@ -37,7 +37,7 @@ This script automatically downloads and configures a Solana test validator with 
 ```rust,no_run
 use pumpfun::{
     accounts::BondingCurveAccount,
-    common::{Cluster, PriorityFee},
+    common::types::{Cluster, PriorityFee},
     utils::CreateTokenMetadata,
     PumpFun,
 };
@@ -97,6 +97,41 @@ println!("Buy signature: {}", signature);
 // Sell tokens (sell all tokens)
 let signature = client.sell(mint.pubkey(), None, None, fee).await.unwrap();
 println!("Sell signature: {}", signature);
+
+// Subscribe to real-time events with the stream feature
+# #[cfg(feature = "stream")]
+use pumpfun::common::stream::PumpFunEvent;
+
+// Subscribe to Pump.fun events
+# #[cfg(feature = "stream")]
+let subscription = client.subscribe(None, |signature, event, error, _response| {
+    match event {
+        Some(PumpFunEvent::Create(create_event)) => {
+            println!("New token created: {} ({})", create_event.name, create_event.symbol);
+            println!("Mint address: {}", create_event.mint);
+            println!("Created by: {}", create_event.creator);
+        },
+        Some(PumpFunEvent::Trade(trade_event)) => {
+            let action = if trade_event.is_buy { "bought" } else { "sold" };
+            println!(
+                "User {} {} {} tokens for {} SOL",
+                trade_event.user,
+                action,
+                trade_event.token_amount,
+                trade_event.sol_amount as f64 / 1_000_000_000.0
+            );
+        },
+        Some(event) => println!("Other event received: {:#?}", event),
+        None => {
+            if let Some(err) = error {
+                eprintln!("Error parsing event in tx {}: {}", signature, err);
+            }
+        }
+    }
+}).await.unwrap();
+
+// Keep subscription active as long as needed
+// The subscription will automatically unsubscribe when dropped
 # });
 ```
 
@@ -109,6 +144,7 @@ println!("Sell signature: {}", signature);
 - Calculate prices, fees and slippage
 - Priority fee support for faster transactions
 - IPFS metadata storage
+- Real-time event subscriptions via WebSockets
 
 ## Feature Flags
 
@@ -119,6 +155,8 @@ The SDK provides several feature flags that can be enabled or disabled based on 
 - `close-ata`: Enabled by default. Automatically closes unused ATAs after selling all tokens, helping to reclaim rent. Disable to keep ATAs open after selling.
 
 - `versioned-tx`: Disabled by default. Enables support for Versioned Transactions with Address Lookup Tables (ALTs), which are useful for complex transactions with many accounts. When enabled, the SDK uses `VersionedTransaction` instead of legacy `Transaction`.
+
+- `stream`: Disabled by default. Enables WebSocket-based event subscriptions for real-time monitoring of token creation, trading, and other on-chain events.
 
 To customize feature flags in your `Cargo.toml`:
 
@@ -131,6 +169,9 @@ pumpfun = { version = "4.0.0", default-features = false }
 
 # Custom selection of features
 pumpfun = { version = "4.0.0", default-features = false, features = ["versioned-tx"] }
+
+# Enable WebSocket event subscriptions
+pumpfun = { version = "4.0.0", features = ["stream"] }
 ```
 
 ## Architecture
@@ -138,7 +179,8 @@ pumpfun = { version = "4.0.0", default-features = false, features = ["versioned-
 The SDK is organized into several modules:
 
 - `accounts`: Account structs for deserializing on-chain state
-- `common`: Common utility functions and types
+- `common`: Common utility functions and types, including:
+  - `stream`: WebSocket-based event subscription handling
 - `constants`: Program constants like seeds and public keys
 - `error`: Custom error types for error handling
 - `instructions`: Transaction instruction builders

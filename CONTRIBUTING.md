@@ -13,7 +13,7 @@ Thank you for your interest in contributing to the PumpFun Rust SDK! This docume
 1. Install Rust and Cargo using [rustup](https://rustup.rs/)
 2. Install Solana CLI tools following the [official guide](https://docs.solana.com/cli/install-solana-cli-tools)
 3. Run `cargo build` to ensure everything compiles
-4. Run `cargo test -- --test-threads 1` to run the test suite
+4. Run `cargo test -F versioned-tx,stream -- --test-threads 1` to run the test suite
 5. For local Solana testing, use the included test validator script:
 
 ### Using the Test Validator
@@ -29,17 +29,20 @@ cd scripts
 ```
 
 This script:
+
 - Downloads the Pump.fun program binary from mainnet
 - Downloads the MPL Token Metadata program binary from mainnet
 - Gets the required account data for the Pump.fun Global Account
 - Configures a local test validator with these components
 
 Options:
+
 - Custom program directory: `PROGRAMS_DIR=./my-programs ./pumpfun-test-validator.sh`
 - Custom accounts directory: `ACCOUNTS_DIR=./my-accounts ./pumpfun-test-validator.sh`
 - Pass additional arguments to solana-test-validator: `./pumpfun-test-validator.sh --log`
 
 The validator runs on:
+
 - RPC: http://127.0.0.1:8899
 - WebSocket: ws://127.0.0.1:8900
 
