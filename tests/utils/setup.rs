@@ -1,6 +1,5 @@
 use std::{
     fs,
-    path::PathBuf,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
@@ -15,8 +14,9 @@ use solana_sdk::{
 
 // Load the default keypair with error handling
 fn load_default_keypair() -> Result<Keypair, String> {
-    let home_path = std::env::var_os("HOME").ok_or("HOME environment variable not set")?;
-    let default_keypair_path = PathBuf::from(home_path).join(".config/solana/id.json");
+    // Get home directory in a cross-platform way
+    let home_path = dirs::home_dir().ok_or("Could not determine home directory")?;
+    let default_keypair_path = home_path.join(".config/solana/id.json");
 
     // Check if the keypair file exists
     if !default_keypair_path.exists() {
