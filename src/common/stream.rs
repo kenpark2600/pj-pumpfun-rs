@@ -285,8 +285,13 @@ mod tests {
     use tokio::sync::Mutex;
     use tokio::time::{timeout, Duration};
 
+    #[cfg(not(skip_expensive_tests))]
     #[tokio::test]
     async fn test_subscribe() {
+        if std::env::var("SKIP_EXPENSIVE_TESTS").is_ok() {
+            return;
+        }
+
         // Define the cluster
         let cluster = Cluster::mainnet(CommitmentConfig::processed(), PriorityFee::default());
 

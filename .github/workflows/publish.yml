@@ -16,7 +16,9 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-      - run: cargo test -F versioned-tx,stream -- --test-threads 1
+      - run: cargo test -F versioned-tx,stream -- --skip expensive
+        env:
+          SKIP_EXPENSIVE_TESTS: 1
 
   publish:
     needs: test

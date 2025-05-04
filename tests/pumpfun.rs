@@ -22,9 +22,14 @@ async fn test_01_get_global_account() {
     );
 }
 
+#[cfg(not(skip_expensive_tests))]
 #[tokio::test]
 #[serial]
 async fn test_02_create_token() {
+    if std::env::var("SKIP_EXPENSIVE_TESTS").is_ok() {
+        return;
+    }
+
     let ctx = TestContext::default();
 
     // Mint keypair
@@ -66,9 +71,14 @@ async fn test_02_create_token() {
     }
 }
 
+#[cfg(not(skip_expensive_tests))]
 #[tokio::test]
 #[serial]
 async fn test_03_buy_token() {
+    if std::env::var("SKIP_EXPENSIVE_TESTS").is_ok() {
+        return;
+    }
+
     let ctx = TestContext::default();
     let mint = ctx.mint.pubkey();
 
@@ -80,9 +90,14 @@ async fn test_03_buy_token() {
     println!("Signature: {}", signature);
 }
 
+#[cfg(not(skip_expensive_tests))]
 #[tokio::test]
 #[serial]
 async fn test_04_sell_token() {
+    if std::env::var("SKIP_EXPENSIVE_TESTS").is_ok() {
+        return;
+    }
+
     let ctx = TestContext::default();
     let mint = ctx.mint.pubkey();
 

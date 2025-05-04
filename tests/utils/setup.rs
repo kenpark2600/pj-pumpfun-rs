@@ -1,4 +1,5 @@
 use std::{
+    fs,
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
@@ -16,6 +17,32 @@ use solana_sdk::{
 fn load_default_keypair() -> Result<Keypair, String> {
     let home_path = std::env::var_os("HOME").ok_or("HOME environment variable not set")?;
     let default_keypair_path = PathBuf::from(home_path).join(".config/solana/id.json");
+
+    // Check if the keypair file exists
+    if !default_keypair_path.exists() {
+        // Generate a new keypair
+        let keypair = Keypair::new();
+
+        // Create directory if it doesn't exist
+        if let Some(parent) = default_keypair_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
+        }
+
+        // Write the keypair to file
+        let keypair_bytes = keypair.to_bytes();
+        fs::write(&default_keypair_path, keypair_bytes).map_err(|e| {
+            format!(
+                "Failed to write keypair to {}: {}",
+                default_keypair_path.display(),
+                e
+            )
+        })?;
+
+        return Ok(keypair);
+    }
+
+    // Read existing keypair
     read_keypair_file(&default_keypair_path).map_err(|e| {
         format!(
             "Failed to read keypair from {}: {}",
@@ -52,7 +79,11 @@ fn initialize_globals() {
     CLIENT
         .set(Mutex::new(PumpFun::new(
             PAYER.get().unwrap().clone(),
-            Cluster::localnet(CommitmentConfig::finalized(), PriorityFee::default()),
+            if std::env::var("SKIP_EXPENSIVE_TESTS").is_ok() {
+                Cluster::mainnet(CommitmentConfig::finalized(), PriorityFee::default())
+            } else {
+                Cluster::localnet(CommitmentConfig::finalized(), PriorityFee::default())
+            },
         )))
         .unwrap_or_else(|_| panic!("CLIENT already set"));
 }
