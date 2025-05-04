@@ -1,9 +1,13 @@
-name: Publish to crates.io
+name: Test
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+      - "**" # All branches
+  pull_request:
+    branches:
+      - "**" # All branches
 
 jobs:
   test:
@@ -25,17 +29,3 @@ jobs:
       - run: cargo test -F versioned-tx,stream -- --skip expensive
         env:
           SKIP_EXPENSIVE_TESTS: 1
-
-  publish:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-      - run: |
-          PKGID=$(cargo pkgid)
-          VERSION=${PKGID##*:}
-          echo "Publishing version $VERSION"
-          cargo publish --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
