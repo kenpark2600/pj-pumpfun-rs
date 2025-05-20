@@ -278,7 +278,12 @@ impl PumpFun {
 
         // Add buy instruction
         let buy_ix = self
-            .get_buy_instructions(mint.pubkey(), amount_sol, slippage_basis_points)
+            .get_buy_instructions(
+                mint.pubkey(),
+                amount_sol,
+                slippage_basis_points,
+                true, // is_initial_buy = true
+            )
             .await?;
         instructions.extend(buy_ix);
 
@@ -373,7 +378,12 @@ impl PumpFun {
 
         // Add buy instruction
         let buy_ix = self
-            .get_buy_instructions(mint, amount_sol, slippage_basis_points)
+            .get_buy_instructions(
+                mint,
+                amount_sol,
+                slippage_basis_points,
+                false, // is_initial_buy = false
+            )
             .await?;
         instructions.extend(buy_ix);
 
@@ -714,6 +724,7 @@ impl PumpFun {
     /// * `amount_sol` - Amount of SOL to spend, in lamports (1 SOL = 1,000,000,000 lamports)
     /// * `slippage_basis_points` - Optional maximum acceptable slippage in basis points (1 bp = 0.01%).
     ///                             If None, defaults to 500 (5%)
+    /// * `is_initial_buy` - Boolean indicating whether this is an initial buy
     ///
     /// # Returns
     ///
@@ -743,7 +754,7 @@ impl PumpFun {
     /// let amount_sol = sol_to_lamports(0.01); // 0.01 SOL
     /// let slippage_bps = Some(300); // 3%
     ///
-    /// let buy_instructions = client.get_buy_instructions(mint, amount_sol, slippage_bps).await?;
+    /// let buy_instructions = client.get_buy_instructions(mint, amount_sol, slippage_bps, true).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -752,13 +763,20 @@ impl PumpFun {
         mint: Pubkey,
         amount_sol: u64,
         slippage_basis_points: Option<u64>,
+        is_initial_buy: bool,
     ) -> Result<Vec<Instruction>, error::ClientError> {
         // Get accounts and calculate buy amounts
         let global_account = self.get_global_account().await?;
-        let bonding_curve_account = self.get_bonding_curve_account(&mint).await?;
-        let buy_amount = bonding_curve_account
-            .get_buy_price(amount_sol)
-            .map_err(error::ClientError::BondingCurveError)?;
+
+        let buy_amount = if is_initial_buy {
+            global_account.get_initial_buy_price(amount_sol)
+        } else {
+            let bonding_curve_account = self.get_bonding_curve_account(&mint).await?;
+            bonding_curve_account
+                .get_buy_price(amount_sol)
+                .map_err(error::ClientError::BondingCurveError)?
+        };
+
         let buy_amount_with_slippage =
             utils::calculate_with_slippage_buy(amount_sol, slippage_basis_points.unwrap_or(500));
 
@@ -955,7 +973,10 @@ impl PumpFun {
     pub fn get_global_pda() -> Pubkey {
         let seeds: &[&[u8]; 1] = &[constants::seeds::GLOBAL_SEED];
         let program_id: &Pubkey = &constants::accounts::PUMPFUN;
-        Pubkey::find_program_address(seeds, program_id).0
+        println!("[SDK-DEBUG] Deriving global_pda with seeds: {:?}, program_id: {}", seeds, program_id);
+        let pda = Pubkey::find_program_address(seeds, program_id).0;
+        println!("[SDK-DEBUG] Derived global_pda: {}", pda);
+        pda
     }
 
     /// Gets the Program Derived Address (PDA) for the mint authority
@@ -980,7 +1001,10 @@ impl PumpFun {
     pub fn get_mint_authority_pda() -> Pubkey {
         let seeds: &[&[u8]; 1] = &[constants::seeds::MINT_AUTHORITY_SEED];
         let program_id: &Pubkey = &constants::accounts::PUMPFUN;
-        Pubkey::find_program_address(seeds, program_id).0
+        println!("[DEBUG] Deriving mint_authority_pda with seeds: {:?}, program_id: {}", seeds, program_id);
+        let pda = Pubkey::find_program_address(seeds, program_id).0;
+        println!("[DEBUG] Derived mint_authority_pda: {}", pda);
+        pda
     }
 
     /// Gets the Program Derived Address (PDA) for a token's bonding curve account
@@ -1011,8 +1035,15 @@ impl PumpFun {
     pub fn get_bonding_curve_pda(mint: &Pubkey) -> Option<Pubkey> {
         let seeds: &[&[u8]; 2] = &[constants::seeds::BONDING_CURVE_SEED, mint.as_ref()];
         let program_id: &Pubkey = &constants::accounts::PUMPFUN;
+        println!("[DEBUG] Deriving bonding_curve_pda with seeds: {:?}, program_id: {}", seeds, program_id);
         let pda: Option<(Pubkey, u8)> = Pubkey::try_find_program_address(seeds, program_id);
-        pda.map(|pubkey| pubkey.0)
+        if let Some((pda, _)) = pda {
+            println!("[DEBUG] Derived bonding_curve_pda: {}", pda);
+            Some(pda)
+        } else {
+            println!("[DEBUG] Failed to derive bonding_curve_pda");
+            None
+        }
     }
 
     /// Gets the Program Derived Address (PDA) for a token's metadata account
@@ -1087,13 +1118,16 @@ impl PumpFun {
     /// ```
     pub async fn get_global_account(&self) -> Result<accounts::GlobalAccount, error::ClientError> {
         let global: Pubkey = Self::get_global_pda();
-
+        println!("[DEBUG] Fetching global account: {}", global);
         let account = self
             .rpc
             .get_account(&global)
-            .await
-            .map_err(error::ClientError::SolanaClientError)?;
-
+            .await;
+        match &account {
+            Ok(acc) => println!("[DEBUG] Fetched global account successfully ({} bytes)", acc.data.len()),
+            Err(e) => println!("[DEBUG] Failed to fetch global account: {}", e),
+        }
+        let account = account.map_err(error::ClientError::SolanaClientError)?;
         solana_sdk::borsh1::try_from_slice_unchecked::<accounts::GlobalAccount>(&account.data)
             .map_err(error::ClientError::BorshError)
     }
@@ -1145,13 +1179,16 @@ impl PumpFun {
     ) -> Result<accounts::BondingCurveAccount, error::ClientError> {
         let bonding_curve_pda =
             Self::get_bonding_curve_pda(mint).ok_or(error::ClientError::BondingCurveNotFound)?;
-
+        println!("[DEBUG] Fetching bonding_curve_account: {}", bonding_curve_pda);
         let account = self
             .rpc
             .get_account(&bonding_curve_pda)
-            .await
-            .map_err(error::ClientError::SolanaClientError)?;
-
+            .await;
+        match &account {
+            Ok(acc) => println!("[DEBUG] Fetched bonding_curve_account successfully ({} bytes)", acc.data.len()),
+            Err(e) => println!("[DEBUG] Failed to fetch bonding_curve_account: {}", e),
+        }
+        let account = account.map_err(error::ClientError::SolanaClientError)?;
         solana_sdk::borsh1::try_from_slice_unchecked::<accounts::BondingCurveAccount>(&account.data)
             .map_err(error::ClientError::BorshError)
     }
