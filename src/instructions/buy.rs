@@ -12,6 +12,7 @@ use solana_sdk::{
     signer::Signer,
 };
 use spl_associated_token_account::get_associated_token_address;
+use std::str::FromStr;
 
 /// Instruction data for buying tokens from a bonding curve
 ///
@@ -76,7 +77,14 @@ impl Buy {
 /// 11. Event authority (readonly)
 /// 12. Pump.fun program ID (readonly)
 pub fn buy(payer: &Keypair, mint: &Pubkey, fee_recipient: &Pubkey, args: Buy) -> Instruction {
-    let bonding_curve: Pubkey = PumpFun::get_bonding_curve_pda(mint).unwrap();
+    let bonding_curve_pda = PumpFun::get_bonding_curve_pda(mint)
+        .unwrap_or_else(|| panic!("Failed to derive bonding_curve_pda for mint {}", mint));
+
+    let creator_vault_pubkey = Pubkey::from_str("4i1qtgUMdH2TzwiirmJBkAtZtZX3speeWEXRSTsE4Y6i")
+        .expect("Failed to parse creator_vault_pubkey");
+
+    let event_authority_pda = constants::accounts::EVENT_AUTHORITY;
+
     Instruction::new_with_bytes(
         constants::accounts::PUMPFUN,
         &args.data(),
@@ -84,14 +92,14 @@ pub fn buy(payer: &Keypair, mint: &Pubkey, fee_recipient: &Pubkey, args: Buy) ->
             AccountMeta::new_readonly(PumpFun::get_global_pda(), false),
             AccountMeta::new(*fee_recipient, false),
             AccountMeta::new_readonly(*mint, false),
-            AccountMeta::new(bonding_curve, false),
-            AccountMeta::new(get_associated_token_address(&bonding_curve, mint), false),
+            AccountMeta::new(bonding_curve_pda, false),
+            AccountMeta::new(get_associated_token_address(&bonding_curve_pda, mint), false),
             AccountMeta::new(get_associated_token_address(&payer.pubkey(), mint), false),
             AccountMeta::new(payer.pubkey(), true),
             AccountMeta::new_readonly(constants::accounts::SYSTEM_PROGRAM, false),
             AccountMeta::new_readonly(constants::accounts::TOKEN_PROGRAM, false),
-            AccountMeta::new_readonly(constants::accounts::RENT, false),
-            AccountMeta::new_readonly(constants::accounts::EVENT_AUTHORITY, false),
+            AccountMeta::new(creator_vault_pubkey, false),
+            AccountMeta::new_readonly(event_authority_pda, false),
             AccountMeta::new_readonly(constants::accounts::PUMPFUN, false),
         ],
     )
