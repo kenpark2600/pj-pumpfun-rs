@@ -84,17 +84,10 @@ impl PumpFun {
     /// ```
     pub fn new(payer: Arc<Keypair>, cluster: Cluster) -> Self {
         // Create Solana RPC Client with HTTP endpoint
-        let rpc = Arc::new(RpcClient::new_with_commitment(
-            cluster.rpc.http.clone(),
-            cluster.commitment,
-        ));
+        let rpc = Arc::new(RpcClient::new_with_commitment(cluster.rpc.http.clone(), cluster.commitment));
 
         // Return configured PumpFun client
-        Self {
-            payer,
-            rpc,
-            cluster,
-        }
+        Self { payer, rpc, cluster }
     }
 
     /// Creates a new token with metadata by uploading metadata to IPFS and initializing on-chain accounts
@@ -152,15 +145,11 @@ impl PumpFun {
     /// # }
     /// ```
     pub async fn create(
-        &self,
-        mint: Keypair,
-        metadata: utils::CreateTokenMetadata,
-        priority_fee: Option<PriorityFee>,
+        &self, mint: Keypair, metadata: utils::CreateTokenMetadata, priority_fee: Option<PriorityFee>,
     ) -> Result<Signature, error::ClientError> {
         // First upload metadata and image to IPFS
-        let ipfs: utils::TokenMetadataResponse = utils::create_token_metadata(metadata)
-            .await
-            .map_err(error::ClientError::UploadMetadataError)?;
+        let ipfs: utils::TokenMetadataResponse =
+            utils::create_token_metadata(metadata).await.map_err(error::ClientError::UploadMetadataError)?;
 
         // Add priority fee if provided or default to cluster priority fee
         let priority_fee = priority_fee.unwrap_or(self.cluster.priority_fee);
@@ -182,11 +171,8 @@ impl PumpFun {
         .await?;
 
         // Send and confirm transaction
-        let signature = self
-            .rpc
-            .send_and_confirm_transaction(&transaction)
-            .await
-            .map_err(error::ClientError::SolanaClientError)?;
+        let signature =
+            self.rpc.send_and_confirm_transaction(&transaction).await.map_err(error::ClientError::SolanaClientError)?;
 
         Ok(signature)
     }
@@ -256,17 +242,12 @@ impl PumpFun {
     /// # }
     /// ```
     pub async fn create_and_buy(
-        &self,
-        mint: Keypair,
-        metadata: utils::CreateTokenMetadata,
-        amount_sol: u64,
-        slippage_basis_points: Option<u64>,
-        priority_fee: Option<PriorityFee>,
+        &self, mint: Keypair, metadata: utils::CreateTokenMetadata, amount_sol: u64,
+        slippage_basis_points: Option<u64>, priority_fee: Option<PriorityFee>,
     ) -> Result<Signature, error::ClientError> {
         // Upload metadata to IPFS first
-        let ipfs: utils::TokenMetadataResponse = utils::create_token_metadata(metadata)
-            .await
-            .map_err(error::ClientError::UploadMetadataError)?;
+        let ipfs: utils::TokenMetadataResponse =
+            utils::create_token_metadata(metadata).await.map_err(error::ClientError::UploadMetadataError)?;
 
         // Add priority fee if provided or default to cluster priority fee
         let priority_fee = priority_fee.unwrap_or(self.cluster.priority_fee);
@@ -299,11 +280,8 @@ impl PumpFun {
         .await?;
 
         // Send and confirm transaction
-        let signature = self
-            .rpc
-            .send_and_confirm_transaction(&transaction)
-            .await
-            .map_err(error::ClientError::SolanaClientError)?;
+        let signature =
+            self.rpc.send_and_confirm_transaction(&transaction).await.map_err(error::ClientError::SolanaClientError)?;
 
         Ok(signature)
     }
@@ -366,11 +344,7 @@ impl PumpFun {
     /// # }
     /// ```
     pub async fn buy(
-        &self,
-        mint: Pubkey,
-        amount_sol: u64,
-        slippage_basis_points: Option<u64>,
-        priority_fee: Option<PriorityFee>,
+        &self, mint: Pubkey, amount_sol: u64, slippage_basis_points: Option<u64>, priority_fee: Option<PriorityFee>,
     ) -> Result<Signature, error::ClientError> {
         // Add priority fee if provided or default to cluster priority fee
         let priority_fee = priority_fee.unwrap_or(self.cluster.priority_fee);
@@ -399,11 +373,8 @@ impl PumpFun {
         .await?;
 
         // Send and confirm transaction
-        let signature = self
-            .rpc
-            .send_and_confirm_transaction(&transaction)
-            .await
-            .map_err(error::ClientError::SolanaClientError)?;
+        let signature =
+            self.rpc.send_and_confirm_transaction(&transaction).await.map_err(error::ClientError::SolanaClientError)?;
 
         Ok(signature)
     }
@@ -471,10 +442,7 @@ impl PumpFun {
     /// # }
     /// ```
     pub async fn sell(
-        &self,
-        mint: Pubkey,
-        amount_token: Option<u64>,
-        slippage_basis_points: Option<u64>,
+        &self, mint: Pubkey, amount_token: Option<u64>, slippage_basis_points: Option<u64>,
         priority_fee: Option<PriorityFee>,
     ) -> Result<Signature, error::ClientError> {
         // Add priority fee if provided or default to cluster priority fee
@@ -482,9 +450,7 @@ impl PumpFun {
         let mut instructions = Self::get_priority_fee_instructions(&priority_fee);
 
         // Add sell instruction
-        let sell_ix = self
-            .get_sell_instructions(mint, amount_token, slippage_basis_points)
-            .await?;
+        let sell_ix = self.get_sell_instructions(mint, amount_token, slippage_basis_points).await?;
         instructions.extend(sell_ix);
 
         // Create and sign transaction
@@ -499,11 +465,8 @@ impl PumpFun {
         .await?;
 
         // Send and confirm transaction
-        let signature = self
-            .rpc
-            .send_and_confirm_transaction(&transaction)
-            .await
-            .map_err(error::ClientError::SolanaClientError)?;
+        let signature =
+            self.rpc.send_and_confirm_transaction(&transaction).await.map_err(error::ClientError::SolanaClientError)?;
 
         Ok(signature)
     }
@@ -588,9 +551,7 @@ impl PumpFun {
     /// ```
     #[cfg(feature = "stream")]
     pub async fn subscribe<F>(
-        &self,
-        commitment: Option<solana_sdk::commitment_config::CommitmentConfig>,
-        callback: F,
+        &self, commitment: Option<solana_sdk::commitment_config::CommitmentConfig>, callback: F,
     ) -> Result<common::stream::Subscription, error::ClientError>
     where
         F: Fn(
@@ -695,11 +656,7 @@ impl PumpFun {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn get_create_instruction(
-        &self,
-        mint: &Keypair,
-        ipfs: utils::TokenMetadataResponse,
-    ) -> Instruction {
+    pub fn get_create_instruction(&self, mint: &Keypair, ipfs: utils::TokenMetadataResponse) -> Instruction {
         instructions::create(
             &self.payer,
             mint,
@@ -759,11 +716,7 @@ impl PumpFun {
     /// # }
     /// ```
     pub async fn get_buy_instructions(
-        &self,
-        mint: Pubkey,
-        amount_sol: u64,
-        slippage_basis_points: Option<u64>,
-        is_initial_buy: bool,
+        &self, mint: Pubkey, amount_sol: u64, slippage_basis_points: Option<u64>, is_initial_buy: bool,
     ) -> Result<Vec<Instruction>, error::ClientError> {
         // Get accounts and calculate buy amounts
         let global_account = self.get_global_account().await?;
@@ -772,9 +725,7 @@ impl PumpFun {
             global_account.get_initial_buy_price(amount_sol)
         } else {
             let bonding_curve_account = self.get_bonding_curve_account(&mint).await?;
-            bonding_curve_account
-                .get_buy_price(amount_sol)
-                .map_err(error::ClientError::BondingCurveError)?
+            bonding_curve_account.get_buy_price(amount_sol).map_err(error::ClientError::BondingCurveError)?
         };
 
         let buy_amount_with_slippage =
@@ -801,10 +752,7 @@ impl PumpFun {
             &self.payer,
             &mint,
             &global_account.fee_recipient,
-            instructions::Buy {
-                amount: buy_amount,
-                max_sol_cost: buy_amount_with_slippage,
-            },
+            instructions::Buy { amount: buy_amount, max_sol_cost: buy_amount_with_slippage },
         ));
 
         Ok(instructions)
@@ -861,10 +809,7 @@ impl PumpFun {
     /// # }
     /// ```
     pub async fn get_sell_instructions(
-        &self,
-        mint: Pubkey,
-        amount_token: Option<u64>,
-        slippage_basis_points: Option<u64>,
+        &self, mint: Pubkey, amount_token: Option<u64>, slippage_basis_points: Option<u64>,
     ) -> Result<Vec<Instruction>, error::ClientError> {
         // Get ATA
         let ata: Pubkey = get_associated_token_address(&self.payer.pubkey(), &mint);
@@ -887,10 +832,7 @@ impl PumpFun {
         let min_sol_output = bonding_curve_account
             .get_sell_price(amount, global_account.fee_basis_points)
             .map_err(error::ClientError::BondingCurveError)?;
-        let min_sol_output = utils::calculate_with_slippage_sell(
-            min_sol_output,
-            slippage_basis_points.unwrap_or(500),
-        );
+        let min_sol_output = utils::calculate_with_slippage_sell(min_sol_output, slippage_basis_points.unwrap_or(500));
 
         let mut instructions = Vec::new();
 
@@ -899,10 +841,7 @@ impl PumpFun {
             &self.payer,
             &mint,
             &global_account.fee_recipient,
-            instructions::Sell {
-                amount,
-                min_sol_output,
-            },
+            instructions::Sell { amount, min_sol_output },
         ));
 
         // Close account if balance equals amount
@@ -935,10 +874,7 @@ impl PumpFun {
                         instructions.push(close_instruction);
                     } else {
                         // Log warning but don't fail the transaction if account doesn't exist
-                        eprintln!(
-                            "Warning: Cannot close token account {}, it doesn't exist",
-                            ata
-                        );
+                        eprintln!("Warning: Cannot close token account {}, it doesn't exist", ata);
                     }
                 }
             } else {
@@ -1001,9 +937,7 @@ impl PumpFun {
     pub fn get_mint_authority_pda() -> Pubkey {
         let seeds: &[&[u8]; 1] = &[constants::seeds::MINT_AUTHORITY_SEED];
         let program_id: &Pubkey = &constants::accounts::PUMPFUN;
-        println!("[DEBUG] Deriving mint_authority_pda with seeds: {:?}, program_id: {}", seeds, program_id);
         let pda = Pubkey::find_program_address(seeds, program_id).0;
-        println!("[DEBUG] Derived mint_authority_pda: {}", pda);
         pda
     }
 
@@ -1035,13 +969,10 @@ impl PumpFun {
     pub fn get_bonding_curve_pda(mint: &Pubkey) -> Option<Pubkey> {
         let seeds: &[&[u8]; 2] = &[constants::seeds::BONDING_CURVE_SEED, mint.as_ref()];
         let program_id: &Pubkey = &constants::accounts::PUMPFUN;
-        println!("[DEBUG] Deriving bonding_curve_pda with seeds: {:?}, program_id: {}", seeds, program_id);
         let pda: Option<(Pubkey, u8)> = Pubkey::try_find_program_address(seeds, program_id);
         if let Some((pda, _)) = pda {
-            println!("[DEBUG] Derived bonding_curve_pda: {}", pda);
             Some(pda)
         } else {
-            println!("[DEBUG] Failed to derive bonding_curve_pda");
             None
         }
     }
@@ -1071,11 +1002,8 @@ impl PumpFun {
     /// println!("Token metadata account: {}", metadata_pda);
     /// ```
     pub fn get_metadata_pda(mint: &Pubkey) -> Pubkey {
-        let seeds: &[&[u8]; 3] = &[
-            constants::seeds::METADATA_SEED,
-            constants::accounts::MPL_TOKEN_METADATA.as_ref(),
-            mint.as_ref(),
-        ];
+        let seeds: &[&[u8]; 3] =
+            &[constants::seeds::METADATA_SEED, constants::accounts::MPL_TOKEN_METADATA.as_ref(), mint.as_ref()];
         let program_id: &Pubkey = &constants::accounts::MPL_TOKEN_METADATA;
         Pubkey::find_program_address(seeds, program_id).0
     }
@@ -1118,15 +1046,7 @@ impl PumpFun {
     /// ```
     pub async fn get_global_account(&self) -> Result<accounts::GlobalAccount, error::ClientError> {
         let global: Pubkey = Self::get_global_pda();
-        println!("[DEBUG] Fetching global account: {}", global);
-        let account = self
-            .rpc
-            .get_account(&global)
-            .await;
-        match &account {
-            Ok(acc) => println!("[DEBUG] Fetched global account successfully ({} bytes)", acc.data.len()),
-            Err(e) => println!("[DEBUG] Failed to fetch global account: {}", e),
-        }
+        let account = self.rpc.get_account(&global).await;
         let account = account.map_err(error::ClientError::SolanaClientError)?;
         solana_sdk::borsh1::try_from_slice_unchecked::<accounts::GlobalAccount>(&account.data)
             .map_err(error::ClientError::BorshError)
@@ -1174,20 +1094,10 @@ impl PumpFun {
     /// # }
     /// ```
     pub async fn get_bonding_curve_account(
-        &self,
-        mint: &Pubkey,
+        &self, mint: &Pubkey,
     ) -> Result<accounts::BondingCurveAccount, error::ClientError> {
-        let bonding_curve_pda =
-            Self::get_bonding_curve_pda(mint).ok_or(error::ClientError::BondingCurveNotFound)?;
-        println!("[DEBUG] Fetching bonding_curve_account: {}", bonding_curve_pda);
-        let account = self
-            .rpc
-            .get_account(&bonding_curve_pda)
-            .await;
-        match &account {
-            Ok(acc) => println!("[DEBUG] Fetched bonding_curve_account successfully ({} bytes)", acc.data.len()),
-            Err(e) => println!("[DEBUG] Failed to fetch bonding_curve_account: {}", e),
-        }
+        let bonding_curve_pda = Self::get_bonding_curve_pda(mint).ok_or(error::ClientError::BondingCurveNotFound)?;
+        let account = self.rpc.get_account(&bonding_curve_pda).await;
         let account = account.map_err(error::ClientError::SolanaClientError)?;
         solana_sdk::borsh1::try_from_slice_unchecked::<accounts::BondingCurveAccount>(&account.data)
             .map_err(error::ClientError::BorshError)
